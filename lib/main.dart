@@ -8,6 +8,8 @@ import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'dart:math' as math;
+import 'dart:async'; // نحتاجها للعدادات
 
 void main() {
   runApp(const MasarakApp());
@@ -21,6 +23,78 @@ List<Map<String, dynamic>> globalBuses = [];
 List<Map<String, dynamic>> globalStudents = [];
 String globalAdminPhone = '0900000000';
 final LatLng schoolLocation = const LatLng(36.28086, 37.03758);
+
+// ==========================================
+// دوال النظام الذكية (توجيه الشوارع وتصميم الباص)
+// ==========================================
+double calculateDistance(LatLng p1, LatLng p2) {
+  var p = 0.017453292519943295;
+  var c = math.cos;
+  var a = 0.5 -
+      c((p2.latitude - p1.latitude) * p) / 2 +
+      c(p1.latitude * p) *
+          c(p2.latitude * p) *
+          (1 - c((p2.longitude - p1.longitude) * p)) /
+          2;
+  return 12742 * math.asin(math.sqrt(a)) * 1000;
+}
+
+Future<Map<String, dynamic>?> getRouteDetails(LatLng start, LatLng end) async {
+  try {
+    final url =
+        'http://router.project-osrm.org/route/v1/driving/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=full&geometries=geojson';
+    final response = await http.get(Uri.parse(url));
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      final geometry = data['routes'][0]['geometry']['coordinates'] as List;
+      return {
+        'distance': data['routes'][0]['distance'],
+        'duration': data['routes'][0]['duration'],
+        'points': geometry.map((p) => LatLng(p[1], p[0])).toList()
+      };
+    }
+  } catch (e) {
+    print('OSRM Error: $e');
+  }
+  return null;
+}
+
+Future<List<LatLng>> getMultiPointRoute(List<LatLng> waypoints) async {
+  if (waypoints.length < 2) return waypoints;
+  try {
+    String coords =
+        waypoints.map((p) => '${p.longitude},${p.latitude}').join(';');
+    final url =
+        'http://router.project-osrm.org/route/v1/driving/$coords?overview=full&geometries=geojson';
+    final response = await http.get(Uri.parse(url));
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      final geometry = data['routes'][0]['geometry']['coordinates'] as List;
+      return geometry.map((p) => LatLng(p[1], p[0])).toList();
+    }
+  } catch (e) {
+    print('Multi OSRM Error: $e');
+  }
+  return waypoints;
+}
+
+Widget premiumBusIcon() {
+  return Container(
+      decoration: BoxDecoration(
+          color: Colors.blueAccent,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2),
+          boxShadow: const [
+            BoxShadow(
+                color: Colors.black54, blurRadius: 6, offset: Offset(0, 3))
+          ]),
+      child: const Center(
+          child: Icon(Icons.directions_bus, color: Colors.white, size: 22)));
+}
+
+// ==========================================
+// دوال الحسابات الذكية والتوجيه عبر الشوارع
+// ==========================================
 
 class MasarakApp extends StatefulWidget {
   const MasarakApp({Key? key}) : super(key: key);
@@ -357,13 +431,15 @@ class _DriverDashboardState extends State<DriverDashboard> {
   late IO.Socket socket;
   bool isConnected = false;
   bool isTracking = false;
-  bool isMorningTrip = true; // ذهاب (صباحي) أم عودة (مسائي)
+  bool isMorningTrip = true;
   double currentSpeed = 0.0;
   LatLng currentPos = const LatLng(36.2150, 37.1450);
   StreamSubscription<Position>? positionStream;
   final MapController mapController = MapController();
   final String serverUrl = 'https://masarak-aleppo.duckdns.org';
   final LatLng schoolLocation = const LatLng(36.28086, 37.03758);
+  List<LatLng> streetRoute = [];
+  Timer? _routeTimer; // مسار الشوارع
 
   @override
   void initState() {
@@ -386,38 +462,53 @@ class _DriverDashboardState extends State<DriverDashboard> {
     socket.onDisconnect((_) => setState(() => isConnected = false));
   }
 
-  // إرسال إشعار عبر السيرفر
   void _sendNotification(String type, String msg, String? studentId) {
-    if (isConnected) {
+    if (isConnected)
       socket
           .emit('busEvent', {'type': type, 'studentId': studentId, 'msg': msg});
+  }
+
+  void _updateDriverRoute() async {
+    if (!isTracking) return;
+    List<LatLng> waypoints = [currentPos];
+    List busStudents =
+        globalStudents.where((s) => s['busId'] == widget.busId).toList();
+    busStudents.sort(
+        (a, b) => (a['stopNumber'] ?? 99).compareTo(b['stopNumber'] ?? 99));
+    if (!isMorningTrip) busStudents = busStudents.reversed.toList();
+    for (var s in busStudents) {
+      if (s['home'] != null && s['status'] == 'waiting')
+        waypoints.add(s['home']);
     }
+    if (isMorningTrip) waypoints.add(schoolLocation);
+    final route = await getMultiPointRoute(waypoints);
+    if (mounted) setState(() => streetRoute = route);
   }
 
   void _toggleTracking() async {
     if (isTracking) {
       positionStream?.cancel();
-      setState(() => isTracking = false);
-      // إشعار الوصول للمدرسة أو انتهاء الرحلة
+      _routeTimer?.cancel();
+      setState(() {
+        isTracking = false;
+        streetRoute = [];
+      });
       _sendNotification(
           'trip_ended',
-          isMorningTrip
-              ? 'وصلت الحافلة إلى المدرسة بسلام.'
-              : 'تم إنهاء رحلة العودة بنجاح.',
+          isMorningTrip ? 'وصلت الحافلة بسلام.' : 'تم إنهاء رحلة العودة بنجاح.',
           null);
     } else {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) return;
       setState(() => isTracking = true);
-      _sendNotification(
-          'trip_started', 'انطلقت الحافلة، يمكنك تتبع المسار الآن.', null);
-
-      // تصفير إشعارات الاقتراب لجميع الطلاب
+      _sendNotification('trip_started', 'انطلقت الحافلة.', null);
       for (var s in globalStudents) {
         s['alertSent'] = false;
         s['status'] = 'waiting';
       }
-
+      _updateDriverRoute();
+      _routeTimer = Timer.periodic(
+          const Duration(seconds: 15), (_) => _updateDriverRoute());
       positionStream = Geolocator.getPositionStream(
               locationSettings: const LocationSettings(
                   accuracy: LocationAccuracy.bestForNavigation,
@@ -428,29 +519,23 @@ class _DriverDashboardState extends State<DriverDashboard> {
           currentPos = LatLng(position.latitude, position.longitude);
           mapController.move(currentPos, 15.0);
         });
+        // إرسال موقع الباص مع الـ ID لتستقبله الإدارة والأهل
         if (isConnected)
-          socket.emit('updateLocation',
-              {'lat': position.latitude, 'lng': position.longitude});
-
-        // --- رادار الاقتراب ---
+          socket.emit('updateLocation', {
+            'busId': widget.busId,
+            'lat': position.latitude,
+            'lng': position.longitude
+          });
         final busStudents =
-            globalStudents.where((s) => s['busId'] == '1').toList();
+            globalStudents.where((s) => s['busId'] == widget.busId).toList();
         for (var student in busStudents) {
           if (student['home'] != null &&
               student['status'] == 'waiting' &&
               student['alertSent'] != true) {
-            double distance = Geolocator.distanceBetween(
-                currentPos.latitude,
-                currentPos.longitude,
-                student['home'].latitude,
-                student['home'].longitude);
-            // إذا كانت المسافة أقل من 300 متر، أرسل إشعار اقتراب
-            if (distance < 300) {
-              student['alertSent'] = true; // لكي لا يرسل الإشعار مئات المرات
-              _sendNotification(
-                  'approaching',
-                  'الحافلة تقترب من موقفك! المسافة أقل من 300 متر.',
-                  student['id']);
+            if (calculateDistance(currentPos, student['home']) < 300) {
+              student['alertSent'] = true;
+              _sendNotification('approaching',
+                  'الحافلة تقترب! المسافة أقل من 300 متر.', student['id']);
             }
           }
         }
@@ -461,38 +546,18 @@ class _DriverDashboardState extends State<DriverDashboard> {
   @override
   void dispose() {
     positionStream?.cancel();
+    _routeTimer?.cancel();
     socket.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // 1. جلب الطلاب وترتيبهم حسب رقم الموقف
     List busStudents =
         globalStudents.where((s) => s['busId'] == widget.busId).toList();
     busStudents.sort(
         (a, b) => (a['stopNumber'] ?? 99).compareTo(b['stopNumber'] ?? 99));
-
-    // إذا كانت رحلة عودة (مساءً)، نعكس الترتيب
-    if (!isMorningTrip) {
-      busStudents = busStudents.reversed.toList();
-    }
-
-    // 2. تشكيل المسار والعلامات
-    List<LatLng> routePoints = [currentPos];
-    if (isMorningTrip) {
-      // صباحاً: باص -> طلاب -> مدرسة
-      for (var s in busStudents) {
-        if (s['home'] != null) routePoints.add(s['home']);
-      }
-      routePoints.add(schoolLocation);
-    } else {
-      // مساءً: مدرسة -> طلاب (البداية من المدرسة أو مكان الباص الحالي)
-      for (var s in busStudents) {
-        if (s['home'] != null) routePoints.add(s['home']);
-      }
-    }
-
+    if (!isMorningTrip) busStudents = busStudents.reversed.toList();
     List<Marker> mapMarkers = [
       Marker(
           point: schoolLocation,
@@ -504,22 +569,21 @@ class _DriverDashboardState extends State<DriverDashboard> {
               point: s['home'] ?? schoolLocation,
               width: 60,
               height: 60,
-              child: Column(mainAxisSize: MainAxisSize.min, // لحصر المساحة
-                  children: [
-                    CircleAvatar(
-                        radius: 10,
-                        backgroundColor: Colors.red,
-                        child: Text('${s['stopNumber'] ?? '-'}',
-                            style: const TextStyle(
-                                color: Colors.white, fontSize: 10))),
-                    const Text('📍', style: TextStyle(fontSize: 15)),
-                  ])))
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                CircleAvatar(
+                    radius: 10,
+                    backgroundColor: Colors.red,
+                    child: Text('${s['stopNumber'] ?? '-'}',
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 10))),
+                const Text('📍', style: TextStyle(fontSize: 15))
+              ])))
           .toList(),
       Marker(
           point: currentPos,
           width: 50,
           height: 50,
-          child: const Text('🚌', style: TextStyle(fontSize: 35))),
+          child: premiumBusIcon()), // الأيقونة الجديدة
     ];
 
     return Scaffold(
@@ -530,19 +594,20 @@ class _DriverDashboardState extends State<DriverDashboard> {
               onPressed: () => Navigator.pushReplacement(context,
                   MaterialPageRoute(builder: (_) => const LoginScreen()))),
           title: Text(
-              'الكابتن ${globalBuses.firstWhere((b) => b['id'] == widget.busId)['driverName']} - حافلة ${globalBuses.firstWhere((b) => b['id'] == widget.busId)['number']}',
+              'الكابتن ${globalBuses.firstWhere((b) => b['id'] == widget.busId, orElse: () => {
+                    'driverName': ''
+                  })['driverName']}',
               style: const TextStyle(fontSize: 14)),
           actions: [
-            // زر تبديل نوع الرحلة
             if (!isTracking)
               TextButton.icon(
-                icon: Icon(
-                    isMorningTrip ? Icons.wb_sunny : Icons.nightlight_round,
-                    color: Colors.orangeAccent),
-                label: Text(isMorningTrip ? 'ذهاب' : 'عودة',
-                    style: const TextStyle(color: Colors.white)),
-                onPressed: () => setState(() => isMorningTrip = !isMorningTrip),
-              ),
+                  icon: Icon(
+                      isMorningTrip ? Icons.wb_sunny : Icons.nightlight_round,
+                      color: Colors.orangeAccent),
+                  label: Text(isMorningTrip ? 'ذهاب' : 'عودة',
+                      style: const TextStyle(color: Colors.white)),
+                  onPressed: () =>
+                      setState(() => isMorningTrip = !isMorningTrip)),
             Icon(Icons.circle,
                 color: isConnected ? Colors.greenAccent : Colors.redAccent,
                 size: 14),
@@ -557,20 +622,19 @@ class _DriverDashboardState extends State<DriverDashboard> {
                     MapOptions(initialCenter: currentPos, initialZoom: 14.0),
                 children: [
                   TileLayer(
-                    urlTemplate:
-                        'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-                    subdomains: const ['a', 'b', 'c', 'd'],
-                    userAgentPackageName: 'com.example.masarak',
-                    maxZoom: 19.0,
-                  ),
+                      urlTemplate:
+                          'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+                      subdomains: const ['a', 'b', 'c', 'd'],
+                      userAgentPackageName: 'com.example.masarak',
+                      maxZoom: 19.0),
                   PolylineLayer(polylines: [
                     Polyline(
-                        points: routePoints,
+                        points:
+                            streetRoute.isNotEmpty ? streetRoute : [currentPos],
                         strokeWidth: 4.0,
-                        color: Colors.blueAccent.withOpacity(0.7),
-                        isDotted: true)
+                        color: Colors.blueAccent)
                   ]),
-                  MarkerLayer(markers: mapMarkers),
+                  MarkerLayer(markers: mapMarkers)
                 ])),
         Expanded(
             flex: 3,
@@ -602,6 +666,11 @@ class _DriverDashboardState extends State<DriverDashboard> {
                           itemCount: busStudents.length,
                           itemBuilder: (ctx, i) {
                             final st = busStudents[i];
+                            double dist = (st['home'] != null)
+                                ? calculateDistance(currentPos, st['home'])
+                                : 9999;
+                            bool isNear =
+                                dist <= 300; // القفل الجغرافي لـ 300 متر
                             return Container(
                                 margin: const EdgeInsets.only(bottom: 8),
                                 padding: const EdgeInsets.symmetric(
@@ -613,78 +682,87 @@ class _DriverDashboardState extends State<DriverDashboard> {
                                     mainAxisAlignment:
                                         MainAxisAlignment.spaceBetween,
                                     children: [
-                                      Row(
-                                        children: [
-                                          CircleAvatar(
-                                              radius: 12,
-                                              backgroundColor: Colors.blueGrey,
-                                              child: Text(
-                                                  '${st['stopNumber'] ?? '-'}',
+                                      Row(children: [
+                                        CircleAvatar(
+                                            radius: 12,
+                                            backgroundColor: Colors.blueGrey,
+                                            child: Text(
+                                                '${st['stopNumber'] ?? '-'}',
+                                                style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontSize: 10))),
+                                        const SizedBox(width: 10),
+                                        Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(st['name'],
                                                   style: const TextStyle(
                                                       color: Colors.white,
-                                                      fontSize: 10))),
-                                          const SizedBox(width: 10),
-                                          Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(st['name'],
-                                                    style: const TextStyle(
-                                                        color: Colors.white,
-                                                        fontWeight:
-                                                            FontWeight.bold)),
-                                                Text(
-                                                    st['status'] == 'boarded'
-                                                        ? 'صعد للحافلة'
-                                                        : st['status'] ==
-                                                                'absent'
-                                                            ? 'غائب'
-                                                            : 'في الانتظار',
-                                                    style: TextStyle(
-                                                        color: st['status'] ==
-                                                                'boarded'
-                                                            ? Colors.green
-                                                            : st['status'] ==
-                                                                    'absent'
-                                                                ? Colors.red
-                                                                : Colors.grey,
-                                                        fontSize: 11))
-                                              ]),
-                                        ],
-                                      ),
+                                                      fontWeight:
+                                                          FontWeight.bold)),
+                                              Text(
+                                                  st['status'] == 'boarded'
+                                                      ? 'صعد للحافلة'
+                                                      : st['status'] == 'absent'
+                                                          ? 'غائب'
+                                                          : 'في الانتظار',
+                                                  style: TextStyle(
+                                                      color: st['status'] ==
+                                                              'boarded'
+                                                          ? Colors.green
+                                                          : st['status'] ==
+                                                                  'absent'
+                                                              ? Colors.red
+                                                              : Colors.grey,
+                                                      fontSize: 11))
+                                            ])
+                                      ]),
                                       Row(children: [
-                                        // زر الحضور
                                         IconButton(
                                             icon: Icon(Icons.check_circle,
                                                 color: st['status'] == 'boarded'
                                                     ? Colors.green
-                                                    : Colors.grey,
+                                                    : (isNear
+                                                        ? Colors.blueAccent
+                                                        : Colors.grey),
                                                 size: 28),
-                                            onPressed: () {
-                                              setState(() =>
-                                                  st['status'] = 'boarded');
-                                              _sendNotification(
-                                                  'student_boarded',
-                                                  isMorningTrip
-                                                      ? 'صعد ${st['name']} إلى الحافلة بنجاح.'
-                                                      : 'نزل ${st['name']} من الحافلة بسلام.',
-                                                  st['id']);
-                                            }),
-                                        // زر الغياب
+                                            onPressed: (isNear &&
+                                                    st['status'] != 'boarded')
+                                                ? () {
+                                                    setState(() =>
+                                                        st['status'] =
+                                                            'boarded');
+                                                    _sendNotification(
+                                                        'student_boarded',
+                                                        isMorningTrip
+                                                            ? 'صعد ${st['name']} إلى الحافلة بنجاح.'
+                                                            : 'نزل ${st['name']} بسلام.',
+                                                        st['id']);
+                                                    _updateDriverRoute();
+                                                  }
+                                                : null),
                                         IconButton(
                                             icon: Icon(Icons.cancel,
                                                 color: st['status'] == 'absent'
                                                     ? Colors.red
-                                                    : Colors.grey,
+                                                    : (isNear
+                                                        ? Colors.orangeAccent
+                                                        : Colors.grey),
                                                 size: 28),
-                                            onPressed: () {
-                                              setState(() =>
-                                                  st['status'] = 'absent');
-                                              _sendNotification(
-                                                  'student_absent',
-                                                  'لم يصعد ${st['name']} للحافلة (تخطى الموقف).',
-                                                  st['id']);
-                                            })
+                                            onPressed: (isNear &&
+                                                    st['status'] != 'absent')
+                                                ? () {
+                                                    setState(() =>
+                                                        st['status'] =
+                                                            'absent');
+                                                    _sendNotification(
+                                                        'student_absent',
+                                                        'لم يصعد ${st['name']} للحافلة.',
+                                                        st['id']);
+                                                    _updateDriverRoute();
+                                                  }
+                                                : null)
                                       ])
                                     ]));
                           }))
@@ -709,15 +787,45 @@ class ParentDashboard extends StatefulWidget {
 class _ParentDashboardState extends State<ParentDashboard> {
   late IO.Socket socket;
   bool isConnected = false;
-  LatLng busPos = const LatLng(36.2150, 37.1450); // موقع افتراضي للباص
+  LatLng busPos = const LatLng(36.2150, 37.1450);
   final MapController mapController = MapController();
-  final String serverUrl =
-      'https://masarak-aleppo.duckdns.org'; // الآي بي الخاص بك
+  final String serverUrl = 'https://masarak-aleppo.duckdns.org';
+  bool isReturnTrip = false;
+  bool alertSent = false;
+  String distanceText = '--';
+  String etaText = '--';
+  List<LatLng> routePoints = [];
+  Timer? _routeTimer;
 
   @override
   void initState() {
     super.initState();
     _initSocket();
+    _routeTimer = Timer.periodic(
+        const Duration(seconds: 5), (timer) => _fetchRealRoute());
+  }
+
+  void _fetchRealRoute() async {
+    LatLng? home = widget.studentData['home'];
+    if (home == null) return;
+    LatLng targetLocation = !isReturnTrip
+        ? ((widget.studentData['status'] == 'boarded') ? schoolLocation : home)
+        : home;
+    final routeData = await getRouteDetails(busPos, targetLocation);
+    if (routeData != null && mounted) {
+      setState(() {
+        routePoints = routeData['points'];
+        distanceText =
+            '${(routeData['distance'] / 1000).toStringAsFixed(1)} كم';
+        etaText = '${(routeData['duration'] / 60).ceil()} دقيقة';
+        if (targetLocation == home &&
+            routeData['distance'] <= 300 &&
+            !alertSent) {
+          alertSent = true;
+          _showNotification('الحافلة تقترب! (أقل من 300 متر)', 'approaching');
+        }
+      });
+    }
   }
 
   void _initSocket() {
@@ -725,57 +833,39 @@ class _ParentDashboardState extends State<ParentDashboard> {
       'transports': ['websocket'],
       'autoConnect': false
     });
-
     socket.connect();
-
     socket.onConnect((_) => setState(() => isConnected = true));
     socket.onDisconnect((_) => setState(() => isConnected = false));
-
-    // 1. استقبال تحديث موقع الباص الحقيقي
     socket.on('locationUpdated', (data) {
-      if (mounted) {
+      if (data['busId'] == widget.studentData['busId'] && mounted) {
         setState(() {
           busPos = LatLng(data['lat'], data['lng']);
-          mapController.move(busPos, 15.0); // تحريك الخريطة لتلحق بالباص
         });
       }
     });
-
-    // 2. استقبال الإشعارات الذكية من السيرفر
     socket.on('busNotification', (data) {
-      // التحقق مما إذا كان الإشعار يخص هذا الطالب تحديداً (أو إشعار عام للرحلة)
       if (data['studentId'] == null ||
-          data['studentId'] == widget.studentData['id']) {
+          data['studentId'] == widget.studentData['id'])
         _showNotification(data['msg'], data['type']);
-      }
     });
   }
 
-  // دالة إظهار الإشعار للمستخدم بتصميم عصري
   void _showNotification(String message, String type) {
     if (!mounted) return;
-
     Color bgColor = Colors.blueAccent;
     IconData icon = Icons.info;
-
-    // تحديد اللون والأيقونة بناءً على نوع الحدث القادم من السائق
     if (type == 'approaching') {
-      bgColor = Colors.orange; // اقتراب الباص
+      bgColor = Colors.orange;
       icon = Icons.warning_amber_rounded;
     } else if (type == 'student_boarded') {
-      bgColor = Colors.green; // صعود ناجح
+      bgColor = Colors.green;
       icon = Icons.check_circle;
     } else if (type == 'student_absent') {
-      bgColor = Colors.redAccent; // غياب الطالب
+      bgColor = Colors.redAccent;
       icon = Icons.cancel;
-    } else if (type == 'trip_started' || type == 'trip_ended') {
-      bgColor = Colors.purpleAccent; // أحداث الرحلة
-      icon = Icons.directions_bus;
     }
-
-    final snackBar = SnackBar(
-      content: Row(
-        children: [
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Row(children: [
           Icon(icon, color: Colors.white, size: 28),
           const SizedBox(width: 15),
           Expanded(
@@ -783,143 +873,137 @@ class _ParentDashboardState extends State<ParentDashboard> {
                   style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
-                      fontSize: 14))),
-        ],
-      ),
-      backgroundColor: bgColor,
-      behavior: SnackBarBehavior.floating,
-      margin: const EdgeInsets.only(bottom: 20, left: 15, right: 15),
-      elevation: 10,
-      duration: const Duration(seconds: 5),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-    );
-
-    ScaffoldMessenger.of(context).showSnackBar(snackBar);
+                      fontSize: 14)))
+        ]),
+        backgroundColor: bgColor,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.only(bottom: 20, left: 15, right: 15),
+        duration: const Duration(seconds: 5),
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))));
   }
 
   @override
   void dispose() {
+    _routeTimer?.cancel();
     socket.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // جلب بيانات الباص المخصص للطالب
     final studentBus = globalBuses.firstWhere(
-      (b) => b['id'] == widget.studentData['busId'],
-      orElse: () => {'number': '-', 'driverName': 'غير محدد', 'phone': ''},
-    );
-
+        (b) => b['id'] == widget.studentData['busId'],
+        orElse: () => {'number': '-', 'driverName': 'غير محدد', 'phone': ''});
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: const Color(0xFF1E293B),
-        leading: IconButton(
-          icon: const Icon(Icons.logout, color: Colors.white),
-          onPressed: () => Navigator.pushReplacement(
-              context, MaterialPageRoute(builder: (_) => const LoginScreen())),
-        ),
-        title: Text('ولي أمر: ${widget.studentData['name'].split(' ')[0]}',
-            style: const TextStyle(fontSize: 14)),
-        actions: [
-          // مؤشر الاتصال بالسيرفر
-          Icon(Icons.circle,
-              color: isConnected ? Colors.greenAccent : Colors.redAccent,
-              size: 14),
-          const SizedBox(width: 15)
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            flex: 3,
-            child: FlutterMap(
-              mapController: mapController,
-              options: MapOptions(initialCenter: busPos, initialZoom: 14.0),
-              children: [
-                TileLayer(
+          backgroundColor: const Color(0xFF1E293B),
+          leading: IconButton(
+              icon: const Icon(Icons.logout, color: Colors.white),
+              onPressed: () => Navigator.pushReplacement(context,
+                  MaterialPageRoute(builder: (_) => const LoginScreen()))),
+          title: Text('ولي أمر: ${widget.studentData['name'].split(' ')[0]}',
+              style: const TextStyle(fontSize: 14)),
+          actions: [
+            IconButton(
+                icon: Icon(
+                    isReturnTrip ? Icons.nightlight_round : Icons.wb_sunny,
+                    color: Colors.yellow),
+                onPressed: () {
+                  setState(() {
+                    isReturnTrip = !isReturnTrip;
+                    alertSent = false;
+                  });
+                }),
+            Icon(Icons.circle,
+                color: isConnected ? Colors.greenAccent : Colors.redAccent,
+                size: 14),
+            const SizedBox(width: 15)
+          ]),
+      body: Stack(children: [
+        FlutterMap(
+            mapController: mapController,
+            options: MapOptions(initialCenter: busPos, initialZoom: 14.0),
+            children: [
+              TileLayer(
                   urlTemplate:
                       'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
                   subdomains: const ['a', 'b', 'c', 'd'],
                   userAgentPackageName: 'com.example.masarak',
-                  maxZoom: 19.0,
-                ),
-                MarkerLayer(markers: [
-                  // 1. دبوس موقع منزل الطالب (إن تم تحديده)
-                  if (widget.studentData['home'] != null)
-                    Marker(
+                  maxZoom: 19.0),
+              PolylineLayer(polylines: [
+                Polyline(
+                    points: routePoints,
+                    strokeWidth: 4.0,
+                    color: Colors.blueAccent)
+              ]),
+              MarkerLayer(markers: [
+                if (widget.studentData['home'] != null)
+                  Marker(
                       point: widget.studentData['home'],
                       width: 40,
                       height: 40,
-                      child: const Text('📍', style: TextStyle(fontSize: 30)),
-                    ),
-                  // 2. أيقونة الحافلة المتحركة
-                  Marker(
+                      child: const Text('📍', style: TextStyle(fontSize: 30))),
+                Marker(
+                    point: schoolLocation,
+                    width: 40,
+                    height: 40,
+                    child: const Text('🏫', style: TextStyle(fontSize: 25))),
+                Marker(
                     point: busPos,
                     width: 50,
                     height: 50,
-                    child: const Text('🚌', style: TextStyle(fontSize: 35)),
-                  ),
-                ]),
-              ],
-            ),
-          ),
-          Expanded(
-            flex: 2,
+                    child: premiumBusIcon()), // الأيقونة الجديدة
+              ]),
+            ]),
+        Positioned(
+            bottom: 20,
+            left: 15,
+            right: 15,
             child: Container(
-              padding: const EdgeInsets.all(20),
-              width: double.infinity,
-              decoration: const BoxDecoration(
-                color: Color(0xFF0F172A),
-                borderRadius: BorderRadius.only(
-                    topLeft: Radius.circular(30),
-                    topRight: Radius.circular(30)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('متابعة مسار الحافلة:',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 15),
-                  Card(
-                    color: const Color(0xFF1E293B),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15)),
-                    child: ListTile(
-                      leading: const CircleAvatar(
-                          backgroundColor: Colors.blueAccent,
-                          child:
-                              Icon(Icons.directions_bus, color: Colors.white)),
-                      title: Text('حافلة رقم ${studentBus['number']}',
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold)),
-                      subtitle: Text('السائق: ${studentBus['driverName']}',
-                          style: const TextStyle(
-                              color: Colors.grey, fontSize: 12)),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.call,
-                                color: Colors.greenAccent),
-                            onPressed: () {
-                              // يمكننا ربطها لاحقاً بـ url_launcher للاتصال الهاتفي المباشر بالسائق
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
+                padding: const EdgeInsets.all(15),
+                decoration: BoxDecoration(
+                    color: const Color(0xFF0F172A).withOpacity(0.9),
+                    borderRadius: BorderRadius.circular(20),
+                    border:
+                        Border.all(color: Colors.blueAccent.withOpacity(0.3))),
+                child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      Column(children: [
+                        const Text('المسافة',
+                            style: TextStyle(color: Colors.grey, fontSize: 12)),
+                        Text(distanceText,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18))
+                      ]),
+                      Column(children: [
+                        const Text('الوقت',
+                            style: TextStyle(color: Colors.grey, fontSize: 12)),
+                        Text(etaText,
+                            style: const TextStyle(
+                                color: Colors.greenAccent,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18))
+                      ]),
+                      Column(children: [
+                        const Text('الهدف',
+                            style: TextStyle(color: Colors.grey, fontSize: 12)),
+                        Text(
+                            isReturnTrip
+                                ? 'المنزل'
+                                : (widget.studentData['status'] == 'boarded'
+                                    ? 'المدرسة'
+                                    : 'المنزل'),
+                            style: const TextStyle(
+                                color: Colors.blueAccent,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16))
+                      ])
+                    ]))),
+      ]),
     );
   }
 }
@@ -963,6 +1047,43 @@ class AdminDashboard extends StatefulWidget {
 class _AdminDashboardState extends State<AdminDashboard> {
   int _currentIndex = 0;
   final MapController mapController = MapController();
+
+  // -- متغيرات التتبع للإدارة --
+  late IO.Socket socket;
+  String? selectedTrackedBusId; // لمعرفة الباص الذي يراقبه المدير حالياً
+  List<LatLng> adminStreetRoute = []; // لرسم مسار الشوارع الأزرق للإدارة
+
+  @override
+  void initState() {
+    super.initState();
+    _initAdminSocket();
+  }
+
+  void _initAdminSocket() {
+    socket = IO.io(serverUrl, <String, dynamic>{
+      'transports': ['websocket'],
+      'autoConnect': false
+    });
+    socket.connect();
+    socket.on('locationUpdated', (data) {
+      if (mounted) {
+        setState(() {
+          // تحديث موقع الباص على شاشة المدير فوراً عند تحركه
+          var busIndex =
+              globalBuses.indexWhere((b) => b['id'] == data['busId']);
+          if (busIndex != -1)
+            globalBuses[busIndex]['location'] =
+                LatLng(data['lat'], data['lng']);
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    socket.dispose();
+    super.dispose();
+  }
 
   // ==========================================
   // دوال الإضافة (POST)
@@ -1524,6 +1645,84 @@ class _AdminDashboardState extends State<AdminDashboard> {
   // واجهات العرض (Views)
   // ==========================================
   Widget _buildMapAndTrackingView() {
+    // 1. إعداد العلامات الأساسية (المدرسة)
+    List<Marker> markers = [
+      Marker(
+          point: schoolLocation,
+          width: 40,
+          height: 40,
+          alignment: Alignment.topCenter,
+          child: const Text('🏫', style: TextStyle(fontSize: 25)))
+    ];
+    List<Polyline> polylines = [];
+
+    // 2. إذا كان المدير يضغط على "متابعة" لباص معين
+    if (selectedTrackedBusId != null) {
+      final bus = globalBuses.firstWhere((b) => b['id'] == selectedTrackedBusId,
+          orElse: () => {});
+
+      if (bus.isNotEmpty && bus['location'] != null) {
+        // وضع أيقونة الباص الاحترافية المتحركة
+        markers.add(Marker(
+            point: bus['location'],
+            width: 50,
+            height: 50,
+            alignment: Alignment.center,
+            child: premiumBusIcon()));
+
+        // جلب طلاب هذا الباص وترتيبهم حسب رقم الموقف
+        final busStudents = globalStudents
+            .where((s) => s['busId'] == selectedTrackedBusId)
+            .toList();
+        busStudents.sort(
+            (a, b) => (a['stopNumber'] ?? 99).compareTo(b['stopNumber'] ?? 99));
+
+        for (var st in busStudents) {
+          if (st['home'] != null) {
+            bool isPassed =
+                st['status'] == 'boarded' || st['status'] == 'absent';
+            // رسم المواقف (الرمادي للموقف المنتهي، البرتقالي للموقف المتبقي)
+            markers.add(Marker(
+                point: st['home'],
+                width: 40,
+                height: 40,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircleAvatar(
+                        radius: 8,
+                        backgroundColor:
+                            isPassed ? Colors.grey : Colors.orangeAccent,
+                        child: Text('${st['stopNumber'] ?? '-'}',
+                            style: const TextStyle(
+                                color: Colors.white, fontSize: 9))),
+                    Icon(Icons.location_on,
+                        color: isPassed ? Colors.grey : Colors.orangeAccent,
+                        size: 20),
+                  ],
+                )));
+          }
+        }
+
+        // رسم الخط المتعرج الواقعي في الشوارع
+        if (adminStreetRoute.isNotEmpty) {
+          polylines.add(Polyline(
+              points: adminStreetRoute,
+              color: Colors.blueAccent,
+              strokeWidth: 4.0));
+        }
+      }
+    } else {
+      // 3. الوضع العادي: إظهار جميع الباصات إذا لم يحدد المدير باصاً معيناً
+      markers.addAll(globalBuses.where((b) => b['location'] != null).map(
+          (bus) => Marker(
+              point: bus['location'],
+              width: 50,
+              height: 50,
+              alignment: Alignment.center,
+              child: premiumBusIcon())));
+    }
+
     return Column(children: [
       Expanded(
           flex: 2,
@@ -1539,24 +1738,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   userAgentPackageName: 'com.example.masarak',
                   maxZoom: 19.0,
                 ),
-                MarkerLayer(markers: [
-                  Marker(
-                      point: schoolLocation,
-                      width: 40,
-                      height: 40,
-                      alignment: Alignment.topCenter,
-                      child: const Text('🏫', style: TextStyle(fontSize: 25))),
-                  ...globalBuses
-                      .where((b) => b['location'] != null)
-                      .map((bus) => Marker(
-                          point: bus['location'],
-                          width: 40,
-                          height: 40,
-                          alignment: Alignment.topCenter,
-                          child:
-                              const Text('🚌', style: TextStyle(fontSize: 25))))
-                      .toList()
-                ])
+                PolylineLayer(polylines: polylines),
+                MarkerLayer(markers: markers)
               ])),
       Expanded(
           flex: 3,
@@ -1596,22 +1779,44 @@ class _AdminDashboardState extends State<AdminDashboard> {
                               onPressed: _showAddStudentDialog))
                     ]),
                     const SizedBox(height: 20),
-                    const Text('متابعة مسارات الحافلات:',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16)),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('متابعة مسارات الحافلات:',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16)),
+                        // زر لإلغاء المتابعة المخصصة والعودة لعرض كل الباصات
+                        if (selectedTrackedBusId != null)
+                          TextButton(
+                              onPressed: () {
+                                setState(() {
+                                  selectedTrackedBusId = null;
+                                  adminStreetRoute = [];
+                                });
+                                mapController.move(schoolLocation, 13.0);
+                              },
+                              child: const Text('عرض الكل',
+                                  style: TextStyle(color: Colors.redAccent)))
+                      ],
+                    ),
                     const SizedBox(height: 10),
                     Expanded(
                         child: ListView.builder(
                             itemCount: globalBuses.length,
                             itemBuilder: (context, index) {
                               final bus = globalBuses[index];
+                              bool isTrackingThis =
+                                  selectedTrackedBusId == bus['id'];
                               return Container(
                                   margin: const EdgeInsets.only(bottom: 10),
                                   padding: const EdgeInsets.all(12),
                                   decoration: BoxDecoration(
                                       color: const Color(0xFF1E293B),
+                                      border: isTrackingThis
+                                          ? Border.all(color: Colors.blueAccent)
+                                          : null,
                                       borderRadius: BorderRadius.circular(10)),
                                   child: Row(
                                       mainAxisAlignment:
@@ -1635,21 +1840,62 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                             ]),
                                         ElevatedButton(
                                             style: ElevatedButton.styleFrom(
-                                                backgroundColor: bus['isActive']
+                                                backgroundColor: isTrackingThis
                                                     ? Colors.blueAccent
-                                                        .withOpacity(0.2)
                                                     : Colors.grey
                                                         .withOpacity(0.2),
                                                 elevation: 0),
-                                            onPressed: () {
-                                              if (bus['location'] != null)
+                                            onPressed: () async {
+                                              setState(() {
+                                                selectedTrackedBusId =
+                                                    bus['id'];
+                                                adminStreetRoute = [];
+                                              });
+                                              if (bus['location'] != null) {
                                                 mapController.move(
-                                                    bus['location'], 16.0);
+                                                    bus['location'], 14.0);
+
+                                                // 💡 حساب مسار الشوارع فوراً عند الضغط على متابعة
+                                                List<LatLng> waypoints = [
+                                                  bus['location']
+                                                ];
+                                                final bStudents = globalStudents
+                                                    .where((s) =>
+                                                        s['busId'] == bus['id'])
+                                                    .toList();
+                                                bStudents.sort((a, b) =>
+                                                    (a['stopNumber'] ?? 99)
+                                                        .compareTo(
+                                                            b['stopNumber'] ??
+                                                                99));
+
+                                                for (var st in bStudents) {
+                                                  if (st['home'] != null &&
+                                                      st['status'] !=
+                                                          'boarded' &&
+                                                      st['status'] !=
+                                                          'absent') {
+                                                    waypoints.add(st['home']);
+                                                  }
+                                                }
+                                                waypoints.add(schoolLocation);
+
+                                                // طلب المسار من السيرفر (OSRM)
+                                                final route =
+                                                    await getMultiPointRoute(
+                                                        waypoints);
+                                                if (mounted &&
+                                                    selectedTrackedBusId ==
+                                                        bus['id']) {
+                                                  setState(() =>
+                                                      adminStreetRoute = route);
+                                                }
+                                              }
                                             },
                                             child: Text('متابعة 📍',
                                                 style: TextStyle(
-                                                    color: bus['isActive']
-                                                        ? Colors.blueAccent
+                                                    color: isTrackingThis
+                                                        ? Colors.white
                                                         : Colors.grey,
                                                     fontSize: 12)))
                                       ]));

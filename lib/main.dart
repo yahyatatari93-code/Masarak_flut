@@ -14,6 +14,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:ui';
+import 'package:flutter/foundation.dart';
 
 // المتغير العام لمشغل الإشعارات
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
@@ -22,15 +23,17 @@ final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // إعداد الإشعارات المحلية
-  const AndroidInitializationSettings initializationSettingsAndroid =
-      AndroidInitializationSettings('@mipmap/ic_launcher');
-  const InitializationSettings initializationSettings =
-      InitializationSettings(android: initializationSettingsAndroid);
-  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+  // التحقق: تشغيل أنظمة الإشعارات والخلفية فقط إذا لم يكن التطبيق على الويب
+  if (!kIsWeb) {
+    const AndroidInitializationSettings initializationSettingsAndroid =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const InitializationSettings initializationSettings =
+        InitializationSettings(android: initializationSettingsAndroid);
+    await flutterLocalNotificationsPlugin.initialize(initializationSettings);
 
-  // تشغيل الجاسوس الصامت (الخدمة الخلفية)
-  await initializeBackgroundService();
+    // تشغيل الجاسوس الصامت (الخدمة الخلفية)
+    await initializeBackgroundService();
+  }
 
   runApp(const MasarakApp());
 }
@@ -115,6 +118,8 @@ void onStartBackground(ServiceInstance service) async {
 // 3. دالة إطلاق الإشعار الصوتي بقوة (تهز الهاتف)
 // ==========================================
 Future<void> showLoudNotification(String title, String body) async {
+  // الخروج من الدالة فوراً إذا كنا على الويب لتجنب الخطأ
+  if (kIsWeb) return;
   const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
     'masarak_urgent_channel',
     'إشعارات مسارك العاجلة',

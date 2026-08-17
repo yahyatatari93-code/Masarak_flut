@@ -10,9 +10,131 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'dart:math' as math;
 import 'dart:async'; // نحتاجها للعدادات
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:ui';
 
-void main() {
+// المتغير العام لمشغل الإشعارات
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // إعداد الإشعارات المحلية
+  const AndroidInitializationSettings initializationSettingsAndroid =
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+  const InitializationSettings initializationSettings =
+      InitializationSettings(android: initializationSettingsAndroid);
+  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+
+  // تشغيل الجاسوس الصامت (الخدمة الخلفية)
+  await initializeBackgroundService();
+
   runApp(const MasarakApp());
+}
+
+// ==========================================
+// 1. تهيئة الجاسوس الصامت (الخدمة الخلفية)
+// ==========================================
+Future<void> initializeBackgroundService() async {
+  final service = FlutterBackgroundService();
+
+  await service.configure(
+    androidConfiguration: AndroidConfiguration(
+      onStart: onStartBackground, // الدالة التي ستعمل في الخلفية
+      autoStart: true,
+      isForegroundMode: true, // ضروري لكي لا يقتله نظام أندرويد
+      notificationChannelId: 'masarak_urgent_channel',
+      initialNotificationTitle: 'نظام مسارك نشط',
+      initialNotificationContent:
+          'يتم الآن تتبع الحافلة في الخلفية لتنبيهك فوراً',
+      foregroundServiceNotificationId: 888,
+    ),
+    iosConfiguration: IosConfiguration(
+      autoStart: true,
+      onForeground: onStartBackground,
+      onBackground: onIosBackground,
+    ),
+  );
+}
+
+@pragma('vm:entry-point')
+Future<bool> onIosBackground(ServiceInstance service) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
+  return true;
+}
+
+// ==========================================
+// 2. عقل الجاسوس الصامت (ماذا يفعل وهو مغلق؟)
+// ==========================================
+@pragma('vm:entry-point')
+void onStartBackground(ServiceInstance service) async {
+  DartPluginRegistrant.ensureInitialized();
+
+  // 1. فتح الذاكرة وقراءة هوية صاحب الهاتف بصمت
+  final prefs = await SharedPreferences.getInstance();
+  String? role = prefs.getString('role');
+  String? studentId = prefs.getString('studentId');
+
+  // 2. إذا كان صاحب الهاتف ولي أمر، افتح خط ساخن مع السيرفر
+  if (role == 'parent') {
+    IO.Socket backgroundSocket =
+        IO.io('https://masarak-aleppo.duckdns.org', <String, dynamic>{
+      'transports': ['websocket'],
+      'autoConnect': true // الاتصال التلقائي من الخلفية
+    });
+
+    backgroundSocket.on('busNotification', (data) async {
+      // 3. فلترة ذكية: هل الإشعار يخصني؟
+      if (data['studentId'] == null || data['studentId'] == studentId) {
+        String type = data['type'];
+        String msg = data['msg'];
+        String title = 'تحديث من الحافلة';
+
+        if (type == 'approaching')
+          title = '⚠️ الحافلة تقترب!';
+        else if (type == 'student_boarded')
+          title = '✅ تأكيد صعود';
+        else if (type == 'student_absent')
+          title = '❌ غياب الطالب';
+        else if (type == 'trip_started')
+          title = '🚀 انطلاق الرحلة';
+        else if (type == 'trip_ended') title = '🏁 نهاية الرحلة';
+
+        // 4. إطلاق الإنذار الصوتي الشديد!
+        await showLoudNotification(title, msg);
+      }
+    });
+  }
+}
+
+// ==========================================
+// 3. دالة إطلاق الإشعار الصوتي بقوة (تهز الهاتف)
+// ==========================================
+Future<void> showLoudNotification(String title, String body) async {
+  const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+    'masarak_urgent_channel',
+    'إشعارات مسارك العاجلة',
+    channelDescription: 'تنبيهات وصول الحافلة وصعود الطلاب',
+    importance: Importance.max,
+    priority: Priority.high,
+    playSound: true,
+    enableVibration: true,
+    visibility: NotificationVisibility.public,
+  );
+
+  const NotificationDetails platformDetails =
+      NotificationDetails(android: androidDetails);
+
+  await flutterLocalNotificationsPlugin.show(
+    DateTime.now().millisecond,
+    title,
+    body,
+    platformDetails,
+  );
 }
 
 // ==========================================
@@ -197,9 +319,11 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  void _attemptLogin() {
+  void _attemptLogin() async {
+    // 1. استدعاء الذاكرة المحلية
+    final prefs = await SharedPreferences.getInstance();
+
     if (selectedRole == 'driver') {
-      // التعديل هنا فقط: إظهار نافذة اختيار الحافلة للسائق
       String? selectedBus;
       showDialog(
         context: context,
@@ -232,10 +356,13 @@ class _LoginScreenState extends State<LoginScreen> {
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blueAccent),
-                  onPressed: () {
+                  onPressed: () async {
                     if (selectedBus != null) {
                       Navigator.pop(ctx);
-                      // تمرير رقم الحافلة بنجاح لشاشة السائق
+                      // 2. حفظ هوية السائق في الذاكرة
+                      await prefs.setString('role', 'driver');
+                      await prefs.setString('busId', selectedBus!);
+
                       Navigator.pushReplacement(
                           context,
                           MaterialPageRoute(
@@ -252,17 +379,16 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       );
     } else if (selectedRole == 'admin') {
+      // 3. حفظ هوية الإدارة في الذاكرة
+      await prefs.setString('role', 'admin');
       Navigator.pushReplacement(
           context, MaterialPageRoute(builder: (_) => const AdminDashboard()));
     } else if (selectedRole == 'parent') {
-      // كود الأهل الخاص بك كما هو تماماً دون أي مساس
       String enteredName = _studentNameController.text.trim();
       String enteredPass = _passwordController.text.trim();
 
-      var foundStudent = globalStudents.firstWhere(
-        (s) => s['name'] == enteredName,
-        orElse: () => {},
-      );
+      var foundStudent = globalStudents
+          .firstWhere((s) => s['name'] == enteredName, orElse: () => {});
 
       if (foundStudent.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -273,15 +399,14 @@ class _LoginScreenState extends State<LoginScreen> {
             content: Text('كلمة المرور غير صحيحة!'),
             backgroundColor: Colors.redAccent));
       } else {
-        var assignedBus = globalBuses.firstWhere(
-          (b) => b['id'] == foundStudent['busId'],
-          orElse: () => {
-            'number': '؟',
-            'driverName': 'غير محدد',
-            'driverPhone': '',
-            'routeName': 'غير محدد'
-          },
-        );
+        var assignedBus =
+            globalBuses.firstWhere((b) => b['id'] == foundStudent['busId'],
+                orElse: () => {
+                      'number': '؟',
+                      'driverName': 'غير محدد',
+                      'driverPhone': '',
+                      'routeName': 'غير محدد'
+                    });
 
         Map<String, dynamic> completeStudentData = {
           ...foundStudent,
@@ -290,6 +415,11 @@ class _LoginScreenState extends State<LoginScreen> {
           'driverPhone': assignedBus['driverPhone'],
           'routeName': assignedBus['routeName'],
         };
+
+        // 4. حفظ هوية ولي الأمر في الذاكرة
+        await prefs.setString('role', 'parent');
+        await prefs.setString('studentId', foundStudent['id']);
+        await prefs.setString('busId', foundStudent['busId'] ?? '');
 
         Navigator.pushReplacement(
             context,
@@ -502,6 +632,13 @@ class _DriverDashboardState extends State<DriverDashboard> {
       if (!serviceEnabled) return;
       setState(() => isTracking = true);
       _sendNotification('trip_started', 'انطلقت الحافلة.', null);
+      // بث موقع الباص في نفس اللحظة ليظهر عند الإدارة والأهل فوراً
+      if (isConnected)
+        socket.emit('updateLocation', {
+          'busId': widget.busId,
+          'lat': currentPos.latitude,
+          'lng': currentPos.longitude
+        });
       for (var s in globalStudents) {
         s['alertSent'] = false;
         s['status'] = 'waiting';
@@ -845,8 +982,13 @@ class _ParentDashboardState extends State<ParentDashboard> {
     });
     socket.on('busNotification', (data) {
       if (data['studentId'] == null ||
-          data['studentId'] == widget.studentData['id'])
+          data['studentId'] == widget.studentData['id']) {
         _showNotification(data['msg'], data['type']);
+        // 💡 أمر ذكي: بمجرد أن يعلن السائق بدء الرحلة، قم بحساب الوقت والمسافة فوراً دون انتظار المؤقت
+        if (data['type'] == 'trip_started') {
+          _fetchRealRoute();
+        }
+      }
     });
   }
 
@@ -854,16 +996,35 @@ class _ParentDashboardState extends State<ParentDashboard> {
     if (!mounted) return;
     Color bgColor = Colors.blueAccent;
     IconData icon = Icons.info;
+    String notificationTitle = 'تحديث من الحافلة';
+
+    // تحديد اللون والأيقونة وعنوان الإشعار الصوتي بناءً على نوع الحدث
     if (type == 'approaching') {
       bgColor = Colors.orange;
       icon = Icons.warning_amber_rounded;
+      notificationTitle = '⚠️ الحافلة تقترب!';
     } else if (type == 'student_boarded') {
       bgColor = Colors.green;
       icon = Icons.check_circle;
+      notificationTitle = '✅ تأكيد صعود';
     } else if (type == 'student_absent') {
       bgColor = Colors.redAccent;
       icon = Icons.cancel;
+      notificationTitle = '❌ غياب الطالب';
+    } else if (type == 'trip_started') {
+      bgColor = Colors.purpleAccent;
+      icon = Icons.directions_bus;
+      notificationTitle = '🚀 انطلاق الرحلة';
+    } else if (type == 'trip_ended') {
+      bgColor = Colors.purpleAccent;
+      icon = Icons.directions_bus;
+      notificationTitle = '🏁 نهاية الرحلة';
     }
+
+    // 1. إطلاق الإشعار الصوتي الحقيقي (يهز الهاتف ويظهر في شريط الإشعارات)
+    showLoudNotification(notificationTitle, message);
+
+    // 2. إظهار اللوحة الملونة داخل التطبيق
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Row(children: [
           Icon(icon, color: Colors.white, size: 28),
@@ -957,7 +1118,7 @@ class _ParentDashboardState extends State<ParentDashboard> {
               ]),
             ]),
         Positioned(
-            bottom: 20,
+            bottom: 90,
             left: 15,
             right: 15,
             child: Container(

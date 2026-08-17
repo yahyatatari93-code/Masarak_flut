@@ -21,19 +21,17 @@ tasks.register<Delete>("clean") {
 }
 
 subprojects {
-    afterEvaluate {
-        if (hasProperty("android")) {
-            val androidExt = extensions.findByName("android")
-            if (androidExt != null) {
-                try {
-                    val getNamespace = androidExt::class.java.getMethod("getNamespace")
-                    if (getNamespace.invoke(androidExt) == null) {
-                        val setNamespace = androidExt::class.java.getMethod("setNamespace", String::class.java)
-                        setNamespace.invoke(androidExt, group.toString())
-                    }
-                } catch (e: Exception) {
-                    // تجاهل بصمت في حال لم تكن المكتبة تحتاج لمعالجة
+    plugins.withId("com.android.library") {
+        val androidExt = extensions.findByName("android")
+        if (androidExt != null) {
+            try {
+                val getNamespace = androidExt::class.java.getMethod("getNamespace")
+                if (getNamespace.invoke(androidExt) == null) {
+                    val setNamespace = androidExt::class.java.getMethod("setNamespace", String::class.java)
+                    setNamespace.invoke(androidExt, group.toString())
                 }
+            } catch (e: Exception) {
+                // تجاهل بصمت
             }
         }
     }

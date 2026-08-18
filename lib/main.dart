@@ -5,11 +5,9 @@ import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'dart:math' as math;
-import 'dart:async'; // نحتاجها للعدادات
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -25,14 +23,14 @@ void main() async {
 
   if (!kIsWeb) {
     try {
-      // 1. تصحيح اسم الأيقونة (يجب أن تكون ic_launcher فقط)
+      // 1. تصحيح اسم الأيقونة
       const AndroidInitializationSettings initializationSettingsAndroid =
           AndroidInitializationSettings('ic_launcher');
       const InitializationSettings initializationSettings =
           InitializationSettings(android: initializationSettingsAndroid);
       await flutterLocalNotificationsPlugin.initialize(initializationSettings);
 
-      // 2. طلب صلاحية الإشعارات من المستخدم (إجباري جداً في أندرويد 13 و 14 لمنع الإغلاق)
+      // 2. طلب صلاحية الإشعارات من المستخدم
       await flutterLocalNotificationsPlugin
           .resolvePlatformSpecificImplementation<
               AndroidFlutterLocalNotificationsPlugin>()
@@ -41,7 +39,6 @@ void main() async {
       // 3. تشغيل الخدمة الخلفية
       await initializeBackgroundService();
     } catch (e) {
-      // 4. الحماية: إذا حدث أي خطأ في الخلفية، اطبعه بصمت ولا تغلق التطبيق!
       print('خطأ في تشغيل الخدمة الخلفية: $e');
     }
   }
@@ -57,10 +54,10 @@ Future<void> initializeBackgroundService() async {
 
   await service.configure(
     androidConfiguration: AndroidConfiguration(
-      onStart: onStartBackground, // الدالة التي ستعمل في الخلفية
+      onStart: onStartBackground,
       autoStart: true,
-      isForegroundMode: true, // ضروري لكي لا يقتله نظام أندرويد
-      notificationChannelId: 'masarak_urgent_channel',
+      isForegroundMode: true,
+      notificationChannelId: 'masarak_urgent_channel_v2',
       initialNotificationTitle: 'نظام مسارك نشط',
       initialNotificationContent:
           'يتم الآن تتبع الحافلة في الخلفية لتنبيهك فوراً',
@@ -88,21 +85,18 @@ Future<bool> onIosBackground(ServiceInstance service) async {
 void onStartBackground(ServiceInstance service) async {
   DartPluginRegistrant.ensureInitialized();
 
-  // 1. فتح الذاكرة وقراءة هوية صاحب الهاتف بصمت
   final prefs = await SharedPreferences.getInstance();
   String? role = prefs.getString('role');
   String? studentId = prefs.getString('studentId');
 
-  // 2. إذا كان صاحب الهاتف ولي أمر، افتح خط ساخن مع السيرفر
   if (role == 'parent') {
     IO.Socket backgroundSocket =
         IO.io('https://masarak-aleppo.duckdns.org', <String, dynamic>{
       'transports': ['websocket'],
-      'autoConnect': true // الاتصال التلقائي من الخلفية
+      'autoConnect': true
     });
 
     backgroundSocket.on('busNotification', (data) async {
-      // 3. فلترة ذكية: هل الإشعار يخصني؟
       if (data['studentId'] == null || data['studentId'] == studentId) {
         String type = data['type'];
         String msg = data['msg'];
@@ -118,7 +112,6 @@ void onStartBackground(ServiceInstance service) async {
           title = '🚀 انطلاق الرحلة';
         else if (type == 'trip_ended') title = '🏁 نهاية الرحلة';
 
-        // 4. إطلاق الإنذار الصوتي الشديد!
         await showLoudNotification(title, msg);
       }
     });
@@ -129,10 +122,9 @@ void onStartBackground(ServiceInstance service) async {
 // 3. دالة إطلاق الإشعار الصوتي بقوة (تهز الهاتف)
 // ==========================================
 Future<void> showLoudNotification(String title, String body) async {
-  // الخروج من الدالة فوراً إذا كنا على الويب لتجنب الخطأ
   if (kIsWeb) return;
   const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-    'masarak_urgent_channel',
+    'masarak_urgent_channel_v2',
     'إشعارات مسارك العاجلة',
     channelDescription: 'تنبيهات وصول الحافلة وصعود الطلاب',
     importance: Importance.max,
@@ -231,9 +223,8 @@ Widget premiumBusIcon() {
 }
 
 // ==========================================
-// دوال الحسابات الذكية والتوجيه عبر الشوارع
+// التطبيق الرئيسي
 // ==========================================
-
 class MasarakApp extends StatefulWidget {
   const MasarakApp({Key? key}) : super(key: key);
   @override
@@ -242,55 +233,99 @@ class MasarakApp extends StatefulWidget {
 
 class _MasarakAppState extends State<MasarakApp> {
   bool isLoading = true;
+  Widget _initialScreen = const LoginScreen(); // الشاشة الافتراضية
 
   @override
   void initState() {
     super.initState();
-    _fetchDataFromServer();
+    _initializeAppData();
   }
 
-  // دالة جلب البيانات من MongoDB
-  Future<void> _fetchDataFromServer() async {
+  Future<void> _initializeAppData() async {
     try {
+      // 1. جلب البيانات من السيرفر
       final response = await http.get(Uri.parse('$serverUrl/api/data'));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        setState(() {
-          // تحويل البيانات القادمة وتجهيز إحداثيات الخريطة
-          globalBuses =
-              List<Map<String, dynamic>>.from(data['buses'].map((b) => {
-                    'id': b['_id'], // MongoDB تستخدم _id
-                    'number': b['number'],
-                    'routeName': b['routeName'],
-                    'driverName': b['driverName'],
-                    'driverPhone': b['driverPhone'],
-                    'isActive': b['isActive'],
-                    'location': b['location'] != null
-                        ? LatLng(b['location']['lat'], b['location']['lng'])
-                        : const LatLng(36.21, 37.14)
-                  }));
+        globalBuses = List<Map<String, dynamic>>.from(data['buses'].map((b) => {
+              'id': b['_id'],
+              'number': b['number'],
+              'routeName': b['routeName'],
+              'driverName': b['driverName'],
+              'driverPhone': b['driverPhone'],
+              'isActive': b['isActive'],
+              'location': b['location'] != null
+                  ? LatLng(b['location']['lat'], b['location']['lng'])
+                  : const LatLng(36.21, 37.14)
+            }));
 
-          globalStudents =
-              List<Map<String, dynamic>>.from(data['students'].map((s) => {
-                    'id': s['_id'],
-                    'name': s['name'],
-                    'seat': s['seat'],
-                    'busId': s['busId'],
-                    'password': s['password'],
-                    'parentPhone': s['parentPhone'],
-                    'address': s['address'],
-                    'stopNumber': s['stopNumber'],
-                    'status': s['status'],
-                    'home': s['home'] != null
-                        ? LatLng(s['home']['lat'], s['home']['lng'])
-                        : null
-                  }));
-          isLoading = false; // إخفاء دائرة التحميل بعد جلب البيانات
+        globalStudents =
+            List<Map<String, dynamic>>.from(data['students'].map((s) => {
+                  'id': s['_id'],
+                  'name': s['name'],
+                  'seat': s['seat'],
+                  'busId': s['busId'],
+                  'password': s['password'],
+                  'parentPhone': s['parentPhone'],
+                  'address': s['address'],
+                  'stopNumber': s['stopNumber'],
+                  'status': s['status'],
+                  'home': s['home'] != null
+                      ? LatLng(s['home']['lat'], s['home']['lng'])
+                      : null
+                }));
+      }
+
+      // 2. التحقق من الذاكرة (هل المستخدم مسجل دخول؟)
+      final prefs = await SharedPreferences.getInstance();
+      String? role = prefs.getString('role');
+      Widget nextScreen = const LoginScreen();
+
+      if (role == 'admin') {
+        nextScreen = const AdminDashboard();
+      } else if (role == 'driver') {
+        String? busId = prefs.getString('busId');
+        if (busId != null) {
+          nextScreen = DriverDashboard(busId: busId);
+        }
+      } else if (role == 'parent') {
+        String? studentId = prefs.getString('studentId');
+        if (studentId != null) {
+          var foundStudent = globalStudents
+              .firstWhere((s) => s['id'] == studentId, orElse: () => {});
+          if (foundStudent.isNotEmpty) {
+            var assignedBus =
+                globalBuses.firstWhere((b) => b['id'] == foundStudent['busId'],
+                    orElse: () => {
+                          'number': '؟',
+                          'driverName': 'غير محدد',
+                          'driverPhone': '',
+                          'routeName': 'غير محدد'
+                        });
+            Map<String, dynamic> completeStudentData = {
+              ...foundStudent,
+              'busNumber': assignedBus['number'],
+              'driverName': assignedBus['driverName'],
+              'driverPhone': assignedBus['driverPhone'],
+              'routeName': assignedBus['routeName'],
+            };
+            nextScreen = ParentDashboard(studentData: completeStudentData);
+          }
+        }
+      }
+
+      // 3. فتح التطبيق
+      if (mounted) {
+        setState(() {
+          _initialScreen = nextScreen;
+          isLoading = false;
         });
       }
     } catch (e) {
-      print('Error fetching data: $e');
-      setState(() => isLoading = false);
+      print('Error initializing data: $e');
+      if (mounted) {
+        setState(() => isLoading = false);
+      }
     }
   }
 
@@ -303,19 +338,15 @@ class _MasarakAppState extends State<MasarakApp> {
           brightness: Brightness.dark,
           scaffoldBackgroundColor: const Color(0xFF0F172A),
           primaryColor: const Color(0xFF2563EB)),
-      // إظهار دائرة تحميل ريثما يتم جلب البيانات من السيرفر
       home: isLoading
           ? const Scaffold(
               body: Center(
                   child: CircularProgressIndicator(color: Colors.blueAccent)))
-          : const LoginScreen(),
+          : _initialScreen, // فتح الشاشة المناسبة مباشرة
     );
   }
 }
 
-// ==========================================
-// 1. شاشة تسجيل الدخول (مع حقل نصي للطالب بدل القائمة)
-// ==========================================
 class LoginScreen extends StatefulWidget {
   const LoginScreen({Key? key}) : super(key: key);
   @override
@@ -323,98 +354,45 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  String selectedRole = 'driver';
-  final TextEditingController _studentNameController = TextEditingController();
+  final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
-  bool _obscurePassword = true;
-
-  @override
-  void dispose() {
-    _studentNameController.dispose();
-    _passwordController.dispose();
-    super.dispose();
-  }
 
   void _attemptLogin() async {
-    // 1. استدعاء الذاكرة المحلية
+    String enteredName = _usernameController.text.trim();
+    String enteredPass = _passwordController.text.trim();
     final prefs = await SharedPreferences.getInstance();
 
-    if (selectedRole == 'driver') {
-      String? selectedBus;
-      showDialog(
-        context: context,
-        builder: (ctx) => StatefulBuilder(
-          builder: (context, setStateDialog) {
-            return AlertDialog(
-              backgroundColor: const Color(0xFF1E293B),
-              title: const Text('اختيار مسار الحافلة',
-                  style: TextStyle(color: Colors.white)),
-              content: DropdownButtonFormField<String>(
-                dropdownColor: const Color(0xFF0F172A),
-                decoration: const InputDecoration(
-                    labelText: 'اختر حافلتك',
-                    labelStyle: TextStyle(color: Colors.blueAccent)),
-                items: globalBuses
-                    .map((bus) => DropdownMenuItem<String>(
-                          value: bus['id'].toString(),
-                          child: Text(
-                              'حافلة ${bus['number']} - ${bus['driverName']}',
-                              style: const TextStyle(color: Colors.white)),
-                        ))
-                    .toList(),
-                onChanged: (val) => setStateDialog(() => selectedBus = val),
-              ),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text('إلغاء',
-                        style: TextStyle(color: Colors.grey))),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blueAccent),
-                  onPressed: () async {
-                    if (selectedBus != null) {
-                      Navigator.pop(ctx);
-                      // 2. حفظ هوية السائق في الذاكرة
-                      await prefs.setString('role', 'driver');
-                      await prefs.setString('busId', selectedBus!);
+    if (enteredName.isEmpty || enteredPass.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('الرجاء إدخال الاسم وكلمة المرور'),
+          backgroundColor: Colors.orange));
+      return;
+    }
 
-                      Navigator.pushReplacement(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) =>
-                                  DriverDashboard(busId: selectedBus!)));
-                    }
-                  },
-                  child:
-                      const Text('دخول', style: TextStyle(color: Colors.white)),
-                ),
-              ],
-            );
-          },
-        ),
-      );
-    } else if (selectedRole == 'admin') {
-      // 3. حفظ هوية الإدارة في الذاكرة
+    if (enteredName == 'admin' && enteredPass == 'admin') {
       await prefs.setString('role', 'admin');
       Navigator.pushReplacement(
           context, MaterialPageRoute(builder: (_) => const AdminDashboard()));
-    } else if (selectedRole == 'parent') {
-      String enteredName = _studentNameController.text.trim();
-      String enteredPass = _passwordController.text.trim();
+      return;
+    }
 
-      var foundStudent = globalStudents
-          .firstWhere((s) => s['name'] == enteredName, orElse: () => {});
+    var foundBus = globalBuses.firstWhere((b) => b['driverName'] == enteredName,
+        orElse: () => {});
+    if (foundBus.isNotEmpty && enteredPass == '1234') {
+      await prefs.setString('role', 'driver');
+      await prefs.setString('busId', foundBus['id'].toString());
+      Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+              builder: (_) =>
+                  DriverDashboard(busId: foundBus['id'].toString())));
+      return;
+    }
 
-      if (foundStudent.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('اسم الطالب غير موجود في النظام!'),
-            backgroundColor: Colors.redAccent));
-      } else if (foundStudent['password'] != enteredPass) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('كلمة المرور غير صحيحة!'),
-            backgroundColor: Colors.redAccent));
-      } else {
+    var foundStudent = globalStudents
+        .firstWhere((s) => s['name'] == enteredName, orElse: () => {});
+    if (foundStudent.isNotEmpty) {
+      if (foundStudent['password'] == enteredPass) {
         var assignedBus =
             globalBuses.firstWhere((b) => b['id'] == foundStudent['busId'],
                 orElse: () => {
@@ -423,7 +401,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       'driverPhone': '',
                       'routeName': 'غير محدد'
                     });
-
         Map<String, dynamic> completeStudentData = {
           ...foundStudent,
           'busNumber': assignedBus['number'],
@@ -432,18 +409,26 @@ class _LoginScreenState extends State<LoginScreen> {
           'routeName': assignedBus['routeName'],
         };
 
-        // 4. حفظ هوية ولي الأمر في الذاكرة
         await prefs.setString('role', 'parent');
         await prefs.setString('studentId', foundStudent['id']);
         await prefs.setString('busId', foundStudent['busId'] ?? '');
-
         Navigator.pushReplacement(
             context,
             MaterialPageRoute(
                 builder: (_) =>
                     ParentDashboard(studentData: completeStudentData)));
+        return;
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('كلمة المرور غير صحيحة!'),
+            backgroundColor: Colors.redAccent));
+        return;
       }
     }
+
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('بيانات الدخول غير صحيحة!'),
+        backgroundColor: Colors.redAccent));
   }
 
   @override
@@ -452,110 +437,73 @@ class _LoginScreenState extends State<LoginScreen> {
       backgroundColor: const Color(0xFF0F172A),
       body: Center(
         child: SingleChildScrollView(
-          child: Container(
-            margin: const EdgeInsets.all(20),
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-                color: const Color(0xFF1E293B),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: Colors.blueAccent.withOpacity(0.3))),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.directions_bus,
-                    size: 80, color: Colors.blueAccent),
-                const SizedBox(height: 10),
-                const Text('يلا',
-                    style: TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white)),
-                const SizedBox(height: 5),
-                const Text('نظام النقل الذكي',
-                    style: TextStyle(color: Colors.grey, fontSize: 14)),
-                const SizedBox(height: 30),
-                DropdownButtonFormField<String>(
-                  value: selectedRole,
-                  dropdownColor: const Color(0xFF0F172A),
-                  decoration: InputDecoration(
-                      filled: true,
-                      fillColor: const Color(0xFF0F172A),
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10))),
-                  items: const [
-                    DropdownMenuItem(
-                        value: 'driver',
-                        child: Text('سائق الحافلة',
-                            style: TextStyle(color: Colors.white))),
-                    DropdownMenuItem(
-                        value: 'parent',
-                        child: Text('ولي الأمر',
-                            style: TextStyle(color: Colors.white))),
-                    DropdownMenuItem(
-                        value: 'admin',
-                        child: Text('الإدارة المركزية',
-                            style: TextStyle(color: Colors.white)))
-                  ],
-                  onChanged: (val) => setState(() {
-                    selectedRole = val!;
-                    _passwordController.clear();
-                    _studentNameController.clear();
-                  }),
+          padding: const EdgeInsets.all(30),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.directions_bus,
+                  size: 100, color: Colors.blueAccent),
+              const SizedBox(height: 20),
+              const Text('نظام مسارك',
+                  style: TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white)),
+              const Text('تسجيل الدخول الموحد',
+                  style: TextStyle(fontSize: 16, color: Colors.grey)),
+              const SizedBox(height: 40),
+              TextField(
+                controller: _usernameController,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'اسم المستخدم',
+                  labelStyle: const TextStyle(color: Colors.blueAccent),
+                  prefixIcon:
+                      const Icon(Icons.person, color: Colors.blueAccent),
+                  enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(15),
+                      borderSide: const BorderSide(color: Colors.grey)),
+                  focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(15),
+                      borderSide: const BorderSide(color: Colors.blueAccent)),
                 ),
-                if (selectedRole == 'parent') ...[
-                  const SizedBox(height: 15),
-                  TextField(
-                    controller: _studentNameController,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(
-                      filled: true,
-                      fillColor: const Color(0xFF0F172A),
-                      labelText: 'اسم الطالب الثلاثي',
-                      labelStyle: const TextStyle(color: Colors.grey),
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10)),
-                    ),
+              ),
+              const SizedBox(height: 20),
+              TextField(
+                controller: _passwordController,
+                obscureText: true,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'كلمة المرور',
+                  labelStyle: const TextStyle(color: Colors.blueAccent),
+                  prefixIcon: const Icon(Icons.lock, color: Colors.blueAccent),
+                  enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(15),
+                      borderSide: const BorderSide(color: Colors.grey)),
+                  focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(15),
+                      borderSide: const BorderSide(color: Colors.blueAccent)),
+                ),
+              ),
+              const SizedBox(height: 40),
+              SizedBox(
+                width: double.infinity,
+                height: 55,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blueAccent,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(15)),
                   ),
-                  const SizedBox(height: 15),
-                  TextField(
-                    controller: _passwordController,
-                    obscureText: _obscurePassword,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(
-                      filled: true,
-                      fillColor: const Color(0xFF0F172A),
-                      labelText: 'كلمة المرور',
-                      labelStyle: const TextStyle(color: Colors.grey),
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10)),
-                      suffixIcon: IconButton(
-                          icon: Icon(
-                              _obscurePassword
-                                  ? Icons.visibility_off
-                                  : Icons.visibility,
-                              color: Colors.grey),
-                          onPressed: () => setState(
-                              () => _obscurePassword = !_obscurePassword)),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 20),
-                SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blueAccent,
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10))),
-                        onPressed: _attemptLogin,
-                        child: const Text('دخول النظام',
-                            style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white)))),
-              ],
-            ),
+                  onPressed: _attemptLogin,
+                  child: const Text('تسجيل الدخول',
+                      style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white)),
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -564,10 +512,10 @@ class _LoginScreenState extends State<LoginScreen> {
 }
 
 // ==========================================
-// 2. شاشة الكابتن (السائق) - ذكية بالكامل
+// 2. شاشة الكابتن (السائق)
 // ==========================================
 class DriverDashboard extends StatefulWidget {
-  final String busId; // إضافة متغير لاستقبال رقم الحافلة
+  final String busId;
   const DriverDashboard({Key? key, required this.busId}) : super(key: key);
   @override
   _DriverDashboardState createState() => _DriverDashboardState();
@@ -585,7 +533,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
   final String serverUrl = 'https://masarak-aleppo.duckdns.org';
   final LatLng schoolLocation = const LatLng(36.28086, 37.03758);
   List<LatLng> streetRoute = [];
-  Timer? _routeTimer; // مسار الشوارع
+  Timer? _routeTimer;
 
   @override
   void initState() {
@@ -595,6 +543,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
   }
 
   Future<void> _requestPermissions() async {
+    if (kIsWeb) return;
     await [Permission.location, Permission.locationAlways].request();
   }
 
@@ -646,22 +595,37 @@ class _DriverDashboardState extends State<DriverDashboard> {
     } else {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) return;
+
+      try {
+        Position initialPosition = await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.bestForNavigation);
+        currentPos =
+            LatLng(initialPosition.latitude, initialPosition.longitude);
+        mapController.move(currentPos, 15.0);
+      } catch (e) {
+        print("خطأ في تحديد الموقع المبدئي: $e");
+      }
+
       setState(() => isTracking = true);
       _sendNotification('trip_started', 'انطلقت الحافلة.', null);
-      // بث موقع الباص في نفس اللحظة ليظهر عند الإدارة والأهل فوراً
-      if (isConnected)
+
+      if (isConnected) {
         socket.emit('updateLocation', {
           'busId': widget.busId,
           'lat': currentPos.latitude,
           'lng': currentPos.longitude
         });
+      }
+
       for (var s in globalStudents) {
         s['alertSent'] = false;
         s['status'] = 'waiting';
       }
+
       _updateDriverRoute();
       _routeTimer = Timer.periodic(
           const Duration(seconds: 15), (_) => _updateDriverRoute());
+
       positionStream = Geolocator.getPositionStream(
               locationSettings: const LocationSettings(
                   accuracy: LocationAccuracy.bestForNavigation,
@@ -672,13 +636,15 @@ class _DriverDashboardState extends State<DriverDashboard> {
           currentPos = LatLng(position.latitude, position.longitude);
           mapController.move(currentPos, 15.0);
         });
-        // إرسال موقع الباص مع الـ ID لتستقبله الإدارة والأهل
-        if (isConnected)
+
+        if (isConnected) {
           socket.emit('updateLocation', {
             'busId': widget.busId,
             'lat': position.latitude,
             'lng': position.longitude
           });
+        }
+
         final busStudents =
             globalStudents.where((s) => s['busId'] == widget.busId).toList();
         for (var student in busStudents) {
@@ -732,11 +698,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
                 const Text('📍', style: TextStyle(fontSize: 15))
               ])))
           .toList(),
-      Marker(
-          point: currentPos,
-          width: 50,
-          height: 50,
-          child: premiumBusIcon()), // الأيقونة الجديدة
+      Marker(point: currentPos, width: 50, height: 50, child: premiumBusIcon()),
     ];
 
     return Scaffold(
@@ -744,8 +706,12 @@ class _DriverDashboardState extends State<DriverDashboard> {
           backgroundColor: const Color(0xFF1E293B),
           leading: IconButton(
               icon: const Icon(Icons.logout, color: Colors.white),
-              onPressed: () => Navigator.pushReplacement(context,
-                  MaterialPageRoute(builder: (_) => const LoginScreen()))),
+              onPressed: () async {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.clear(); // هذا الأمر سيمسح الذاكرة ويخرجك نهائياً
+                Navigator.pushReplacement(context,
+                    MaterialPageRoute(builder: (_) => const LoginScreen()));
+              }),
           title: Text(
               'الكابتن ${globalBuses.firstWhere((b) => b['id'] == widget.busId, orElse: () => {
                     'driverName': ''
@@ -775,11 +741,12 @@ class _DriverDashboardState extends State<DriverDashboard> {
                     MapOptions(initialCenter: currentPos, initialZoom: 14.0),
                 children: [
                   TileLayer(
-                      urlTemplate:
-                          'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-                      subdomains: const ['a', 'b', 'c', 'd'],
-                      userAgentPackageName: 'com.example.masarak',
-                      maxZoom: 19.0),
+                    urlTemplate:
+                        'https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+                    subdomains: const ['mt0', 'mt1', 'mt2', 'mt3'],
+                    userAgentPackageName: 'com.example.masarak',
+                    maxZoom: 19.0,
+                  ),
                   PolylineLayer(polylines: [
                     Polyline(
                         points:
@@ -822,8 +789,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
                             double dist = (st['home'] != null)
                                 ? calculateDistance(currentPos, st['home'])
                                 : 9999;
-                            bool isNear =
-                                dist <= 300; // القفل الجغرافي لـ 300 متر
+                            bool isNear = dist <= 300;
                             return Container(
                                 margin: const EdgeInsets.only(bottom: 8),
                                 padding: const EdgeInsets.symmetric(
@@ -926,7 +892,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
 }
 
 // ==========================================
-// 3. شاشة ولي الأمر - استقبال التنبيهات المباشرة
+// 3. شاشة ولي الأمر
 // ==========================================
 class ParentDashboard extends StatefulWidget {
   final Map<String, dynamic> studentData;
@@ -956,6 +922,55 @@ class _ParentDashboardState extends State<ParentDashboard> {
     _initSocket();
     _routeTimer = Timer.periodic(
         const Duration(seconds: 5), (timer) => _fetchRealRoute());
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkBatteryOptimization();
+    });
+  }
+
+  void _checkBatteryOptimization() async {
+    if (kIsWeb) return;
+    if (await Permission.ignoreBatteryOptimizations.isDenied) {
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          backgroundColor: const Color(0xFF1E293B),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          title: const Row(
+            children: [
+              Icon(Icons.battery_alert, color: Colors.orange, size: 30),
+              SizedBox(width: 10),
+              Text('تنبيه هام جداً! ⚠️',
+                  style: TextStyle(color: Colors.white, fontSize: 18)),
+            ],
+          ),
+          content: const Text(
+            'لضمان وصول تنبيهات اقتراب الحافلة (الاهتزاز والصوت) في وقتها الدقيق حتى لو كانت شاشة الهاتف مغلقة، يجب السماح للتطبيق بالعمل في الخلفية دون قيود من نظام البطارية.\n\nاضغط "موافق" ثم اختر "السماح" أو "بدون قيود".',
+            style: TextStyle(color: Colors.white70, fontSize: 14, height: 1.5),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('لاحقاً', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              style:
+                  ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+              onPressed: () async {
+                Navigator.pop(context);
+                await Permission.ignoreBatteryOptimizations.request();
+              },
+              child: const Text('موافق',
+                  style: TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      );
+    }
   }
 
   void _fetchRealRoute() async {
@@ -1000,7 +1015,6 @@ class _ParentDashboardState extends State<ParentDashboard> {
       if (data['studentId'] == null ||
           data['studentId'] == widget.studentData['id']) {
         _showNotification(data['msg'], data['type']);
-        // 💡 أمر ذكي: بمجرد أن يعلن السائق بدء الرحلة، قم بحساب الوقت والمسافة فوراً دون انتظار المؤقت
         if (data['type'] == 'trip_started') {
           _fetchRealRoute();
         }
@@ -1014,7 +1028,6 @@ class _ParentDashboardState extends State<ParentDashboard> {
     IconData icon = Icons.info;
     String notificationTitle = 'تحديث من الحافلة';
 
-    // تحديد اللون والأيقونة وعنوان الإشعار الصوتي بناءً على نوع الحدث
     if (type == 'approaching') {
       bgColor = Colors.orange;
       icon = Icons.warning_amber_rounded;
@@ -1037,10 +1050,8 @@ class _ParentDashboardState extends State<ParentDashboard> {
       notificationTitle = '🏁 نهاية الرحلة';
     }
 
-    // 1. إطلاق الإشعار الصوتي الحقيقي (يهز الهاتف ويظهر في شريط الإشعارات)
     showLoudNotification(notificationTitle, message);
 
-    // 2. إظهار اللوحة الملونة داخل التطبيق
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Row(children: [
           Icon(icon, color: Colors.white, size: 28),
@@ -1069,16 +1080,17 @@ class _ParentDashboardState extends State<ParentDashboard> {
 
   @override
   Widget build(BuildContext context) {
-    final studentBus = globalBuses.firstWhere(
-        (b) => b['id'] == widget.studentData['busId'],
-        orElse: () => {'number': '-', 'driverName': 'غير محدد', 'phone': ''});
     return Scaffold(
       appBar: AppBar(
           backgroundColor: const Color(0xFF1E293B),
           leading: IconButton(
               icon: const Icon(Icons.logout, color: Colors.white),
-              onPressed: () => Navigator.pushReplacement(context,
-                  MaterialPageRoute(builder: (_) => const LoginScreen()))),
+              onPressed: () async {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.clear(); // هذا الأمر سيمسح الذاكرة ويخرجك نهائياً
+                Navigator.pushReplacement(context,
+                    MaterialPageRoute(builder: (_) => const LoginScreen()));
+              }),
           title: Text('ولي أمر: ${widget.studentData['name'].split(' ')[0]}',
               style: const TextStyle(fontSize: 14)),
           actions: [
@@ -1103,11 +1115,12 @@ class _ParentDashboardState extends State<ParentDashboard> {
             options: MapOptions(initialCenter: busPos, initialZoom: 14.0),
             children: [
               TileLayer(
-                  urlTemplate:
-                      'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-                  subdomains: const ['a', 'b', 'c', 'd'],
-                  userAgentPackageName: 'com.example.masarak',
-                  maxZoom: 19.0),
+                urlTemplate:
+                    'https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+                subdomains: const ['mt0', 'mt1', 'mt2', 'mt3'],
+                userAgentPackageName: 'com.example.masarak',
+                maxZoom: 19.0,
+              ),
               PolylineLayer(polylines: [
                 Polyline(
                     points: routePoints,
@@ -1130,7 +1143,7 @@ class _ParentDashboardState extends State<ParentDashboard> {
                     point: busPos,
                     width: 50,
                     height: 50,
-                    child: premiumBusIcon()), // الأيقونة الجديدة
+                    child: premiumBusIcon()),
               ]),
             ]),
         Positioned(
@@ -1185,35 +1198,8 @@ class _ParentDashboardState extends State<ParentDashboard> {
   }
 }
 
-Widget _buildNotificationTile(String title, String desc, String time,
-    {bool isAlert = false}) {
-  return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-          color: isAlert
-              ? Colors.orangeAccent.withOpacity(0.1)
-              : const Color(0xFF1E293B),
-          border: Border.all(
-              color: isAlert
-                  ? Colors.orangeAccent.withOpacity(0.5)
-                  : Colors.transparent),
-          borderRadius: BorderRadius.circular(10)),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          Text(title,
-              style: TextStyle(
-                  color: isAlert ? Colors.orangeAccent : Colors.white,
-                  fontWeight: FontWeight.bold)),
-          Text(time, style: const TextStyle(color: Colors.grey, fontSize: 10))
-        ]),
-        const SizedBox(height: 4),
-        Text(desc, style: const TextStyle(color: Colors.grey, fontSize: 12))
-      ]));
-}
-
 // ==========================================
-// 4. شاشة الإدارة المركزية (مع تحديث البيانات مركزياً)
+// 4. شاشة الإدارة المركزية
 // ==========================================
 class AdminDashboard extends StatefulWidget {
   const AdminDashboard({Key? key}) : super(key: key);
@@ -1224,11 +1210,9 @@ class AdminDashboard extends StatefulWidget {
 class _AdminDashboardState extends State<AdminDashboard> {
   int _currentIndex = 0;
   final MapController mapController = MapController();
-
-  // -- متغيرات التتبع للإدارة --
   late IO.Socket socket;
-  String? selectedTrackedBusId; // لمعرفة الباص الذي يراقبه المدير حالياً
-  List<LatLng> adminStreetRoute = []; // لرسم مسار الشوارع الأزرق للإدارة
+  String? selectedTrackedBusId;
+  List<LatLng> adminStreetRoute = [];
 
   @override
   void initState() {
@@ -1245,7 +1229,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
     socket.on('locationUpdated', (data) {
       if (mounted) {
         setState(() {
-          // تحديث موقع الباص على شاشة المدير فوراً عند تحركه
           var busIndex =
               globalBuses.indexWhere((b) => b['id'] == data['busId']);
           if (busIndex != -1)
@@ -1262,9 +1245,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
     super.dispose();
   }
 
-  // ==========================================
-  // دوال الإضافة (POST)
-  // ==========================================
   void _showAddBusDialog() {
     String bNum = '';
     String rName = '';
@@ -1533,9 +1513,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
             }));
   }
 
-  // ==========================================
-  // دوال التعديل (PUT)
-  // ==========================================
   void _showEditBusDialog(int index) {
     final bus = globalBuses[index];
     String bNum = bus['number'];
@@ -1818,11 +1795,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
-  // ==========================================
-  // واجهات العرض (Views)
-  // ==========================================
   Widget _buildMapAndTrackingView() {
-    // 1. إعداد العلامات الأساسية (المدرسة)
     List<Marker> markers = [
       Marker(
           point: schoolLocation,
@@ -1833,13 +1806,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
     ];
     List<Polyline> polylines = [];
 
-    // 2. إذا كان المدير يضغط على "متابعة" لباص معين
     if (selectedTrackedBusId != null) {
       final bus = globalBuses.firstWhere((b) => b['id'] == selectedTrackedBusId,
           orElse: () => {});
 
       if (bus.isNotEmpty && bus['location'] != null) {
-        // وضع أيقونة الباص الاحترافية المتحركة
         markers.add(Marker(
             point: bus['location'],
             width: 50,
@@ -1847,7 +1818,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
             alignment: Alignment.center,
             child: premiumBusIcon()));
 
-        // جلب طلاب هذا الباص وترتيبهم حسب رقم الموقف
         final busStudents = globalStudents
             .where((s) => s['busId'] == selectedTrackedBusId)
             .toList();
@@ -1858,7 +1828,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
           if (st['home'] != null) {
             bool isPassed =
                 st['status'] == 'boarded' || st['status'] == 'absent';
-            // رسم المواقف (الرمادي للموقف المنتهي، البرتقالي للموقف المتبقي)
             markers.add(Marker(
                 point: st['home'],
                 width: 40,
@@ -1881,7 +1850,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
           }
         }
 
-        // رسم الخط المتعرج الواقعي في الشوارع
         if (adminStreetRoute.isNotEmpty) {
           polylines.add(Polyline(
               points: adminStreetRoute,
@@ -1890,7 +1858,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
         }
       }
     } else {
-      // 3. الوضع العادي: إظهار جميع الباصات إذا لم يحدد المدير باصاً معيناً
       markers.addAll(globalBuses.where((b) => b['location'] != null).map(
           (bus) => Marker(
               point: bus['location'],
@@ -1910,8 +1877,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
               children: [
                 TileLayer(
                   urlTemplate:
-                      'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-                  subdomains: const ['a', 'b', 'c', 'd'],
+                      'https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+                  subdomains: const ['mt0', 'mt1', 'mt2', 'mt3'],
                   userAgentPackageName: 'com.example.masarak',
                   maxZoom: 19.0,
                 ),
@@ -1964,7 +1931,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,
                                 fontSize: 16)),
-                        // زر لإلغاء المتابعة المخصصة والعودة لعرض كل الباصات
                         if (selectedTrackedBusId != null)
                           TextButton(
                               onPressed: () {
@@ -2032,7 +1998,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                                 mapController.move(
                                                     bus['location'], 14.0);
 
-                                                // 💡 حساب مسار الشوارع فوراً عند الضغط على متابعة
                                                 List<LatLng> waypoints = [
                                                   bus['location']
                                                 ];
@@ -2057,7 +2022,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                                 }
                                                 waypoints.add(schoolLocation);
 
-                                                // طلب المسار من السيرفر (OSRM)
                                                 final route =
                                                     await getMultiPointRoute(
                                                         waypoints);
@@ -2099,8 +2063,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ...globalBuses.map((bus) {
             final busStudents =
                 globalStudents.where((s) => s['busId'] == bus['id']).toList();
-            busStudents.sort((a, b) => (a['stopNumber'] ?? 99)
-                .compareTo(b['stopNumber'] ?? 99)); // ترتيب حسب الموقف
+            busStudents.sort((a, b) =>
+                (a['stopNumber'] ?? 99).compareTo(b['stopNumber'] ?? 99));
             return Card(
                 color: const Color(0xFF1E293B),
                 margin: const EdgeInsets.only(bottom: 12),
@@ -2319,8 +2283,12 @@ class _AdminDashboardState extends State<AdminDashboard> {
             backgroundColor: const Color(0xFF1E293B),
             leading: IconButton(
                 icon: const Icon(Icons.logout, color: Colors.white),
-                onPressed: () => Navigator.pushReplacement(context,
-                    MaterialPageRoute(builder: (_) => const LoginScreen()))),
+                onPressed: () async {
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.clear(); // هذا الأمر سيمسح الذاكرة ويخرجك نهائياً
+                  Navigator.pushReplacement(context,
+                      MaterialPageRoute(builder: (_) => const LoginScreen()));
+                }),
             title: const Text('لوحة الإدارة المركزية',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
         body: IndexedStack(index: _currentIndex, children: [
@@ -2345,7 +2313,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
 }
 
 // ==========================================
-// 5. شاشة التقاط الموقع من الخريطة (نظام أوبر الاحترافي)
+// 5. شاشة التقاط الموقع من الخريطة
 // ==========================================
 class LocationPickerScreen extends StatefulWidget {
   final LatLng? initialLocation;
@@ -2381,13 +2349,11 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                         fontWeight: FontWeight.bold,
                         fontSize: 16)),
                 onPressed: () {
-                  // قراءة إحداثيات مركز الخريطة المباشر بدقة 100%
                   Navigator.pop(context, _mapController.camera.center);
                 })
           ]),
       body: Stack(
         children: [
-          // 1. الخريطة القابلة للسحب
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
@@ -2397,31 +2363,24 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
             children: [
               TileLayer(
                 urlTemplate:
-                    'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-                subdomains: const ['a', 'b', 'c', 'd'],
+                    'https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+                subdomains: const ['mt0', 'mt1', 'mt2', 'mt3'],
                 userAgentPackageName: 'com.example.masarak',
                 maxZoom: 19.0,
               ),
             ],
           ),
-
-          // 2. الدبوس الثابت في منتصف الشاشة تماماً
           const Align(
             alignment: Alignment.center,
             child: Padding(
-              padding: EdgeInsets.only(
-                  bottom: 35.0), // لرفع الدبوس قليلاً ليكون رأسه في المركز
+              padding: EdgeInsets.only(bottom: 35.0),
               child: Icon(Icons.location_on, size: 45, color: Colors.redAccent),
             ),
           ),
-
-          // 3. نقطة سوداء صغيرة للتصويب الدقيق
           const Align(
             alignment: Alignment.center,
             child: CircleAvatar(radius: 3, backgroundColor: Colors.black),
           ),
-
-          // 4. رسالة توضيحية للمستخدم
           Align(
             alignment: Alignment.topCenter,
             child: Container(

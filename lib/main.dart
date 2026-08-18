@@ -23,16 +23,27 @@ final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // التحقق: تشغيل أنظمة الإشعارات والخلفية فقط إذا لم يكن التطبيق على الويب
   if (!kIsWeb) {
-    const AndroidInitializationSettings initializationSettingsAndroid =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
-    const InitializationSettings initializationSettings =
-        InitializationSettings(android: initializationSettingsAndroid);
-    await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+    try {
+      // 1. تصحيح اسم الأيقونة (يجب أن تكون ic_launcher فقط)
+      const AndroidInitializationSettings initializationSettingsAndroid =
+          AndroidInitializationSettings('ic_launcher');
+      const InitializationSettings initializationSettings =
+          InitializationSettings(android: initializationSettingsAndroid);
+      await flutterLocalNotificationsPlugin.initialize(initializationSettings);
 
-    // تشغيل الجاسوس الصامت (الخدمة الخلفية)
-    await initializeBackgroundService();
+      // 2. طلب صلاحية الإشعارات من المستخدم (إجباري جداً في أندرويد 13 و 14 لمنع الإغلاق)
+      await flutterLocalNotificationsPlugin
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>()
+          ?.requestNotificationsPermission();
+
+      // 3. تشغيل الخدمة الخلفية
+      await initializeBackgroundService();
+    } catch (e) {
+      // 4. الحماية: إذا حدث أي خطأ في الخلفية، اطبعه بصمت ولا تغلق التطبيق!
+      print('خطأ في تشغيل الخدمة الخلفية: $e');
+    }
   }
 
   runApp(const MasarakApp());

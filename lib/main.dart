@@ -539,12 +539,36 @@ class _DriverDashboardState extends State<DriverDashboard> {
   void initState() {
     super.initState();
     _initSocket();
-    _requestPermissions();
+    _requestPermissionsAndLocate();
   }
 
-  Future<void> _requestPermissions() async {
+  Future<void> _requestPermissionsAndLocate() async {
     if (kIsWeb) return;
-    await [Permission.location, Permission.locationAlways].request();
+
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) return;
+
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+
+    // تسخين الـ GPS وتحديد الموقع فور فتح التطبيق (قبل الضغط على بدء الرحلة)
+    if (permission == LocationPermission.whileInUse ||
+        permission == LocationPermission.always) {
+      try {
+        Position pos = await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.high);
+        if (mounted) {
+          setState(() {
+            currentPos = LatLng(pos.latitude, pos.longitude);
+          });
+          mapController.move(currentPos, 15.0);
+        }
+      } catch (e) {
+        print('خطأ في جلب الموقع المبدئي: $e');
+      }
+    }
   }
 
   void _initSocket() {
@@ -594,27 +618,36 @@ class _DriverDashboardState extends State<DriverDashboard> {
           null);
     } else {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) return;
-
-      try {
-        Position initialPosition = await Geolocator.getCurrentPosition(
-            desiredAccuracy: LocationAccuracy.bestForNavigation);
-        currentPos =
-            LatLng(initialPosition.latitude, initialPosition.longitude);
-        mapController.move(currentPos, 15.0);
-      } catch (e) {
-        print("خطأ في تحديد الموقع المبدئي: $e");
+      if (!serviceEnabled) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('الرجاء تفعيل موقع الهاتف (GPS) أولاً!'),
+            backgroundColor: Colors.red));
+        return;
       }
 
+      // تغيير الواجهة فوراً لعدم تأخير المستخدم
       setState(() => isTracking = true);
       _sendNotification('trip_started', 'انطلقت الحافلة.', null);
 
-      if (isConnected) {
-        socket.emit('updateLocation', {
-          'busId': widget.busId,
-          'lat': currentPos.latitude,
-          'lng': currentPos.longitude
+      try {
+        // التقاط الموقع الحقيقي بدقة عالية
+        Position initialPosition = await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.bestForNavigation);
+        setState(() {
+          currentPos =
+              LatLng(initialPosition.latitude, initialPosition.longitude);
         });
+        mapController.move(currentPos, 15.0);
+
+        if (isConnected) {
+          socket.emit('updateLocation', {
+            'busId': widget.busId,
+            'lat': currentPos.latitude,
+            'lng': currentPos.longitude
+          });
+        }
+      } catch (e) {
+        print("خطأ تحديد الموقع المبدئي: $e");
       }
 
       for (var s in globalStudents) {

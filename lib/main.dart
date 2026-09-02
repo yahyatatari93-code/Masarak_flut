@@ -540,6 +540,11 @@ class _DriverDashboardState extends State<DriverDashboard> {
     super.initState();
     _initSocket();
     _requestPermissionsAndLocate();
+
+    // 🌟 التعرف التلقائي على نوع الرحلة بناءً على ساعة النظام الحالية
+    int currentHour = DateTime.now().hour;
+    // إذا كان الوقت قبل الساعة 12 ظهراً، فهي رحلة ذهاب (true)، وإلا ففهي رحلة عودة (false)
+    isMorningTrip = currentHour < 12;
   }
 
   Future<void> _requestPermissionsAndLocate() async {

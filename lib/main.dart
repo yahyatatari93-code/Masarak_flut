@@ -57,7 +57,8 @@ Future<void> initializeBackgroundService() async {
       onStart: onStartBackground,
       autoStart: true,
       isForegroundMode: true,
-      notificationChannelId: 'masarak_urgent_channel_v2',
+      // 🌟 التعديل هنا: اسم قناة خاص بالخدمة الصامتة فقط
+      notificationChannelId: 'masarak_bg_service_channel',
       initialNotificationTitle: 'نظام مسارك نشط',
       initialNotificationContent:
           'يتم الآن تتبع الحافلة في الخلفية لتنبيهك فوراً',
@@ -125,8 +126,9 @@ void onStartBackground(ServiceInstance service) async {
 // ==========================================
 Future<void> showLoudNotification(String title, String body) async {
   if (kIsWeb) return;
+  // 🌟 التعديل هنا: إنشاء قناة جديدة (v3) لنجبر الهاتف على الرنين والاهتزاز
   const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-    'masarak_urgent_channel_v2',
+    'masarak_urgent_channel_v3',
     'إشعارات مسارك العاجلة',
     channelDescription: 'تنبيهات وصول الحافلة وصعود الطلاب',
     importance: Importance.max,
@@ -741,6 +743,19 @@ class _DriverDashboardState extends State<DriverDashboard> {
       Marker(point: currentPos, width: 50, height: 50, child: premiumBusIcon()),
     ];
 
+// تحديد هل السائق مسموح له بإنهاء الرحلة أم لا
+    bool canEndTrip = false;
+    if (isTracking) {
+      if (isMorningTrip) {
+        // مسموح في رحلة الذهاب فقط إذا كانت المسافة للمدرسة 300 متر أو أقل
+        canEndTrip = calculateDistance(currentPos, schoolLocation) <= 300;
+      } else {
+        // مسموح في رحلة العودة فقط إذا كان كل الطلاب حالاتهم "boarded" (نزلوا) أو "absent" (غائبين)
+        canEndTrip = busStudents.isNotEmpty &&
+            busStudents.every(
+                (s) => s['status'] == 'boarded' || s['status'] == 'absent');
+      }
+    }
     return Scaffold(
       appBar: AppBar(
           backgroundColor: const Color(0xFF1E293B),
@@ -803,22 +818,43 @@ class _DriverDashboardState extends State<DriverDashboard> {
                 decoration: const BoxDecoration(color: Color(0xFF0F172A)),
                 child: Column(children: [
                   GestureDetector(
-                      onTap: _toggleTracking,
+                      onTap: () {
+                        if (!isTracking) {
+                          _toggleTracking(); // بدء الرحلة متاح دائماً
+                        } else if (canEndTrip) {
+                          _toggleTracking(); // إنهاء الرحلة (إذا تحققت الشروط)
+                        } else {
+                          // إظهار تنبيه يوضح سبب القفل
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                            content: Text(isMorningTrip
+                                ? '🔒 لا يمكن إنهاء الرحلة! يجب الاقتراب من المدرسة مسافة 300 متر.'
+                                : '🔒 لا يمكن إنهاء الرحلة! يجب إنزال جميع الطلاب أو تسجيل غيابهم.'),
+                            backgroundColor: Colors.orange,
+                          ));
+                        }
+                      },
                       child: Container(
                           height: 55,
                           decoration: BoxDecoration(
-                              color: isTracking
-                                  ? Colors.redAccent
-                                  : Colors.blueAccent,
+                              // تغيير لون الزر لرمادي إذا كان مقفلاً
+                              color: !isTracking
+                                  ? Colors.blueAccent
+                                  : (canEndTrip
+                                      ? Colors.redAccent
+                                      : Colors.grey.shade700),
                               borderRadius: BorderRadius.circular(15)),
                           child: Center(
                               child: Text(
-                                  isTracking
-                                      ? 'إنهـاء الرحلـة'
-                                      : 'بدء الرحلة والتتبع',
-                                  style: const TextStyle(
+                                  !isTracking
+                                      ? 'بدء الرحلة والتتبع'
+                                      : (canEndTrip
+                                          ? 'إنهـاء الرحلـة'
+                                          : 'إنهـاء الرحلـة (مقفل)'),
+                                  style: TextStyle(
                                       fontSize: 18,
-                                      color: Colors.white,
+                                      color: !isTracking || canEndTrip
+                                          ? Colors.white
+                                          : Colors.grey.shade400,
                                       fontWeight: FontWeight.bold))))),
                   const SizedBox(height: 15),
                   Expanded(

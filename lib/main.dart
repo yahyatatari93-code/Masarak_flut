@@ -106,6 +106,8 @@ void onStartBackground(ServiceInstance service) async {
           title = '⚠️ الحافلة تقترب!';
         else if (type == 'student_boarded')
           title = '✅ تأكيد صعود';
+        else if (type == 'student_dropped_off') // <--- السطر الجديد
+          title = '🏠 تأكيد نزول'; // <--- السطر الجديد
         else if (type == 'student_absent')
           title = '❌ غياب الطالب';
         else if (type == 'trip_started')
@@ -891,7 +893,9 @@ class _DriverDashboardState extends State<DriverDashboard> {
                                                         st['status'] =
                                                             'boarded');
                                                     _sendNotification(
-                                                        'student_boarded',
+                                                        isMorningTrip
+                                                            ? 'student_boarded'
+                                                            : 'student_dropped_off', // تمييز نوع الحدث برمجياً
                                                         isMorningTrip
                                                             ? 'صعد ${st['name']} إلى الحافلة بنجاح.'
                                                             : 'نزل ${st['name']} بسلام.',
@@ -1074,6 +1078,11 @@ class _ParentDashboardState extends State<ParentDashboard> {
       bgColor = Colors.green;
       icon = Icons.check_circle;
       notificationTitle = '✅ تأكيد صعود';
+    } else if (type == 'student_dropped_off') {
+      // <--- الإضافة الجديدة
+      bgColor = Colors.teal;
+      icon = Icons.home;
+      notificationTitle = '🏠 تأكيد نزول';
     } else if (type == 'student_absent') {
       bgColor = Colors.redAccent;
       icon = Icons.cancel;

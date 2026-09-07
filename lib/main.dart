@@ -751,7 +751,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
         canEndTrip = calculateDistance(currentPos, schoolLocation) <= 300;
       } else {
         // مسموح في رحلة العودة فقط إذا كان كل الطلاب حالاتهم "boarded" (نزلوا) أو "absent" (غائبين)
-        canEndTrip = busStudents.isNotEmpty &&
+        canEndTrip = busStudents.isEmpty ||
             busStudents.every(
                 (s) => s['status'] == 'boarded' || s['status'] == 'absent');
       }

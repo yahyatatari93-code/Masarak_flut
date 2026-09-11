@@ -913,54 +913,125 @@ class _DriverDashboardState extends State<DriverDashboard> {
                                                       fontSize: 11))
                                             ])
                                       ]),
-                                      Row(children: [
-                                        IconButton(
-                                            icon: Icon(Icons.check_circle,
-                                                color: st['status'] == 'boarded'
-                                                    ? Colors.green
-                                                    : (isNear
-                                                        ? Colors.blueAccent
-                                                        : Colors.grey),
-                                                size: 28),
-                                            onPressed: (isNear &&
-                                                    st['status'] != 'boarded')
-                                                ? () {
-                                                    setState(() =>
-                                                        st['status'] =
-                                                            'boarded');
-                                                    _sendNotification(
-                                                        isMorningTrip
-                                                            ? 'student_boarded'
-                                                            : 'student_dropped_off', // تمييز نوع الحدث برمجياً
-                                                        isMorningTrip
-                                                            ? 'صعد ${st['name']} إلى الحافلة بنجاح.'
-                                                            : 'نزل ${st['name']} بسلام.',
-                                                        st['id']);
-                                                    _updateDriverRoute();
+                                      // الشرط الذكي: إذا كان الموقع مفقوداً، يظهر زر "تثبيت الموقف"، وإلا تظهر أزرار الصعود والنزول المعتادة
+                                      st['home'] == null
+                                          ? ElevatedButton.icon(
+                                              style: ElevatedButton.styleFrom(
+                                                  backgroundColor:
+                                                      Colors.orangeAccent,
+                                                  shape: RoundedRectangleBorder(
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              10)),
+                                                  padding: const EdgeInsets
+                                                          .symmetric(
+                                                      horizontal: 10,
+                                                      vertical: 5)),
+                                              icon: const Icon(
+                                                  Icons.add_location_alt,
+                                                  size: 16,
+                                                  color: Colors.white),
+                                              label: const Text('تثبيت الموقف',
+                                                  style: TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 11,
+                                                      fontWeight:
+                                                          FontWeight.bold)),
+                                              onPressed: () async {
+                                                try {
+                                                  final response =
+                                                      await http.put(
+                                                    Uri.parse(
+                                                        '$serverUrl/api/students/${st['id']}'),
+                                                    headers: {
+                                                      'Content-Type':
+                                                          'application/json'
+                                                    },
+                                                    body: json.encode({
+                                                      'home': {
+                                                        'lat':
+                                                            currentPos.latitude,
+                                                        'lng':
+                                                            currentPos.longitude
+                                                      }
+                                                    }),
+                                                  );
+                                                  if (response.statusCode ==
+                                                      200) {
+                                                    setState(() {
+                                                      st['home'] = LatLng(
+                                                          currentPos.latitude,
+                                                          currentPos.longitude);
+                                                    });
+                                                    _updateDriverRoute(); // تحديث خط السير الأزرق فوراً ليضم المنزل الجديد
+                                                    ScaffoldMessenger.of(
+                                                            context)
+                                                        .showSnackBar(SnackBar(
+                                                      content: Text(
+                                                          '📍 تم حفظ موقف ${st['name']} بنجاح!'),
+                                                      backgroundColor:
+                                                          Colors.green,
+                                                    ));
                                                   }
-                                                : null),
-                                        IconButton(
-                                            icon: Icon(Icons.cancel,
-                                                color: st['status'] == 'absent'
-                                                    ? Colors.red
-                                                    : (isNear
-                                                        ? Colors.orangeAccent
-                                                        : Colors.grey),
-                                                size: 28),
-                                            onPressed: (isNear &&
-                                                    st['status'] != 'absent')
-                                                ? () {
-                                                    setState(() =>
-                                                        st['status'] =
-                                                            'absent');
-                                                    _sendNotification(
-                                                        'student_absent',
-                                                        'لم يصعد ${st['name']} للحافلة.',
-                                                        st['id']);
-                                                    _updateDriverRoute();
-                                                  }
-                                                : null)
-                                      ])
+                                                } catch (e) {
+                                                  print(
+                                                      'خطأ في حفظ الموقع: $e');
+                                                }
+                                              })
+                                          : Row(children: [
+                                              IconButton(
+                                                  icon: Icon(Icons.check_circle,
+                                                      color: st['status'] ==
+                                                              'boarded'
+                                                          ? Colors.green
+                                                          : (isNear
+                                                              ? Colors
+                                                                  .blueAccent
+                                                              : Colors.grey),
+                                                      size: 28),
+                                                  onPressed: (isNear &&
+                                                          st['status'] !=
+                                                              'boarded')
+                                                      ? () {
+                                                          setState(() =>
+                                                              st['status'] =
+                                                                  'boarded');
+                                                          _sendNotification(
+                                                              isMorningTrip
+                                                                  ? 'student_boarded'
+                                                                  : 'student_dropped_off',
+                                                              isMorningTrip
+                                                                  ? 'صعد ${st['name']} إلى الحافلة بنجاح.'
+                                                                  : 'نزل ${st['name']} بسلام.',
+                                                              st['id']);
+                                                          _updateDriverRoute();
+                                                        }
+                                                      : null),
+                                              IconButton(
+                                                  icon: Icon(Icons.cancel,
+                                                      color: st['status'] ==
+                                                              'absent'
+                                                          ? Colors.red
+                                                          : (isNear
+                                                              ? Colors
+                                                                  .orangeAccent
+                                                              : Colors.grey),
+                                                      size: 28),
+                                                  onPressed: (isNear &&
+                                                          st['status'] !=
+                                                              'absent')
+                                                      ? () {
+                                                          setState(() =>
+                                                              st['status'] =
+                                                                  'absent');
+                                                          _sendNotification(
+                                                              'student_absent',
+                                                              'لم يصعد ${st['name']} للحافلة.',
+                                                              st['id']);
+                                                          _updateDriverRoute();
+                                                        }
+                                                      : null)
+                                            ])
                                     ]));
                           }))
                 ])))

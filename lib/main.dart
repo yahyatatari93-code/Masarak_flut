@@ -768,7 +768,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
                     MaterialPageRoute(builder: (_) => const LoginScreen()));
               }),
           title: Text(
-              'الكابتن ${globalBuses.firstWhere((b) => b['id'] == widget.busId, orElse: () => {
+              'المشرف ${globalBuses.firstWhere((b) => b['id'] == widget.busId, orElse: () => {
                     'driverName': ''
                   })['driverName']}',
               style: const TextStyle(fontSize: 14)),
@@ -1427,13 +1427,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 TextField(
                     style: const TextStyle(color: Colors.white),
                     decoration: const InputDecoration(
-                        labelText: 'اسم السائق',
+                        labelText: 'اسم المشرف',
                         labelStyle: TextStyle(color: Colors.grey)),
                     onChanged: (val) => dName = val),
                 TextField(
                     style: const TextStyle(color: Colors.white),
                     decoration: const InputDecoration(
-                        labelText: 'هاتف السائق',
+                        labelText: 'هاتف المشرف',
                         labelStyle: TextStyle(color: Colors.grey)),
                     keyboardType: TextInputType.phone,
                     onChanged: (val) => dPhone = val),
@@ -1699,14 +1699,14 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     initialValue: dName,
                     style: const TextStyle(color: Colors.white),
                     decoration: const InputDecoration(
-                        labelText: 'اسم السائق',
+                        labelText: 'اسم المشرف',
                         labelStyle: TextStyle(color: Colors.blueAccent)),
                     onChanged: (val) => dName = val),
                 TextFormField(
                     initialValue: dPhone,
                     style: const TextStyle(color: Colors.white),
                     decoration: const InputDecoration(
-                        labelText: 'هاتف السائق',
+                        labelText: 'هاتف المشرف',
                         labelStyle: TextStyle(color: Colors.blueAccent)),
                     keyboardType: TextInputType.phone,
                     onChanged: (val) => dPhone = val)
@@ -2130,7 +2130,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                                       fontWeight:
                                                           FontWeight.bold)),
                                               Text(
-                                                  'السائق: ${bus['driverName']}',
+                                                  'المشرف: ${bus['driverName']}',
                                                   style: const TextStyle(
                                                       color: Colors.grey,
                                                       fontSize: 12))
@@ -2235,7 +2235,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                             child: Icon(Icons.directions_bus,
                                 color: Colors.white, size: 20)),
                         title: Text(
-                            'حافلة ${bus['number']} - السائق: ${bus['driverName']}',
+                            'حافلة ${bus['number']} - المشرف: ${bus['driverName']}',
                             style: const TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold)),
@@ -2461,7 +2461,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
               BottomNavigationBarItem(
                   icon: Icon(Icons.school), label: 'الطلاب'),
               BottomNavigationBarItem(
-                  icon: Icon(Icons.drive_eta), label: 'السائقين')
+                  icon: Icon(Icons.drive_eta), label: 'المشرفون')
             ]));
   }
 }

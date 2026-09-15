@@ -939,6 +939,29 @@ class _DriverDashboardState extends State<DriverDashboard> {
                                                           FontWeight.bold)),
                                               onPressed: () async {
                                                 try {
+                                                  // 1. استخراج أعلى رقم ترتيب حالي في باص هذا المشرف
+                                                  int currentMaxStop = 0;
+                                                  for (var student
+                                                      in globalStudents) {
+                                                    if (student['busId'] ==
+                                                        widget.busId) {
+                                                      int stop = student[
+                                                              'stopNumber'] ??
+                                                          99;
+                                                      // نتجاهل الرقم 99 لأنه مخصص برمجياً للطلاب الذين ليس لديهم موقف بعد
+                                                      if (stop != 99 &&
+                                                          stop >
+                                                              currentMaxStop) {
+                                                        currentMaxStop = stop;
+                                                      }
+                                                    }
+                                                  }
+
+                                                  // 2. إعطاء الطالب الحالي الرقم التالي في التسلسل
+                                                  int newStopNumber =
+                                                      currentMaxStop + 1;
+
+                                                  // 3. إرسال الموقع والترتيب الجديد للسيرفر معاً
                                                   final response =
                                                       await http.put(
                                                     Uri.parse(
@@ -953,29 +976,36 @@ class _DriverDashboardState extends State<DriverDashboard> {
                                                             currentPos.latitude,
                                                         'lng':
                                                             currentPos.longitude
-                                                      }
+                                                      },
+                                                      'stopNumber':
+                                                          newStopNumber // 🌟 التعديل السحري: إرسال الترتيب الجديد
                                                     }),
                                                   );
+
                                                   if (response.statusCode ==
                                                       200) {
                                                     setState(() {
                                                       st['home'] = LatLng(
                                                           currentPos.latitude,
                                                           currentPos.longitude);
+                                                      st['stopNumber'] =
+                                                          newStopNumber; // تحديث رقم الطالب في الذاكرة لترتيب القائمة
                                                     });
                                                     _updateDriverRoute(); // تحديث خط السير الأزرق فوراً ليضم المنزل الجديد
+
+                                                    // إشعار نجاح يوضح للسائق رقم الترتيب الذي حصل عليه الطالب
                                                     ScaffoldMessenger.of(
                                                             context)
                                                         .showSnackBar(SnackBar(
                                                       content: Text(
-                                                          '📍 تم حفظ موقف ${st['name']} بنجاح!'),
+                                                          '📍 تم حفظ موقف ${st['name']} (الترتيب: $newStopNumber) بنجاح!'),
                                                       backgroundColor:
                                                           Colors.green,
                                                     ));
                                                   }
                                                 } catch (e) {
                                                   print(
-                                                      'خطأ في حفظ الموقع: $e');
+                                                      'خطأ في حفظ الموقع والترتيب: $e');
                                                 }
                                               })
                                           : Row(children: [
@@ -1494,7 +1524,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     String phone = '';
     String addr = '';
     String? sBus;
-    String stopNum = '1';
+    String stopNum = '';
     LatLng? homeLocation;
 
     showDialog(
@@ -1600,9 +1630,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       onPressed: () async {
                         if (sName.isNotEmpty && sBus != null) {
                           int newStopNum = int.tryParse(stopNum) ?? 99;
-                          bool stopNumberExists = globalStudents.any((s) =>
-                              s['busId'] == sBus &&
-                              s['stopNumber'] == newStopNum);
+// التعديل: استثناء الرقم 99 من فحص التكرار
+                          bool stopNumberExists = newStopNum != 99 &&
+                              globalStudents.any((s) =>
+                                  s['busId'] == sBus &&
+                                  s['stopNumber'] == newStopNum);
 
                           if (stopNumberExists) {
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -1884,10 +1916,12 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   onPressed: () async {
                     if (sName.isNotEmpty && sBus != null) {
                       int newStopNum = int.tryParse(stopNum) ?? 99;
-                      bool stopNumberExists = globalStudents.any((s) =>
-                          s['busId'] == sBus &&
-                          s['stopNumber'] == newStopNum &&
-                          s['id'] != st['id']);
+// التعديل: استثناء الرقم 99 من فحص التكرار
+                      bool stopNumberExists = newStopNum != 99 &&
+                          globalStudents.any((s) =>
+                              s['busId'] == sBus &&
+                              s['stopNumber'] == newStopNum &&
+                              s['id'] != st['id']);
 
                       if (stopNumberExists) {
                         ScaffoldMessenger.of(context).showSnackBar(

@@ -13,6 +13,7 @@ import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:ui';
 import 'package:flutter/foundation.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 // المتغير العام لمشغل الإشعارات
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
@@ -105,6 +106,8 @@ void onStartBackground(ServiceInstance service) async {
 
         if (type == 'approaching')
           title = '⚠️ الحافلة تقترب!';
+        else if (type == 'emergency') // 🌟 السطر الجديد
+          title = '🚨 حالة طوارئ/تأخير!'; // 🌟 السطر الجديد
         else if (type == 'student_boarded')
           title = '✅ تأكيد صعود';
         else if (type == 'student_dropped_off') // <--- السطر الجديد
@@ -274,6 +277,8 @@ class _MasarakAppState extends State<MasarakApp> {
                   'address': s['address'],
                   'stopNumber': s['stopNumber'],
                   'status': s['status'],
+                  'absenceCount':
+                      s['absenceCount'] ?? 0, // 🌟 إضافة قراءة عداد الغياب
                   'home': s['home'] != null
                       ? LatLng(s['home']['lat'], s['home']['lng'])
                       : null
@@ -591,9 +596,14 @@ class _DriverDashboardState extends State<DriverDashboard> {
   }
 
   void _sendNotification(String type, String msg, String? studentId) {
-    if (isConnected)
-      socket
-          .emit('busEvent', {'type': type, 'studentId': studentId, 'msg': msg});
+    if (isConnected) {
+      socket.emit('busEvent', {
+        'busId': widget.busId, // 🌟 أضفنا معرف الحافلة لكي يؤرشفها السيرفر
+        'type': type,
+        'studentId': studentId,
+        'msg': msg
+      });
+    }
   }
 
   void _updateDriverRoute() async {
@@ -817,45 +827,80 @@ class _DriverDashboardState extends State<DriverDashboard> {
                 padding: const EdgeInsets.all(15),
                 decoration: const BoxDecoration(color: Color(0xFF0F172A)),
                 child: Column(children: [
-                  GestureDetector(
-                      onTap: () {
-                        if (!isTracking) {
-                          _toggleTracking(); // بدء الرحلة متاح دائماً
-                        } else if (canEndTrip) {
-                          _toggleTracking(); // إنهاء الرحلة (إذا تحققت الشروط)
-                        } else {
-                          // إظهار تنبيه يوضح سبب القفل
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                            content: Text(isMorningTrip
-                                ? '🔒 لا يمكن إنهاء الرحلة! يجب الاقتراب من المدرسة مسافة 300 متر.'
-                                : '🔒 لا يمكن إنهاء الرحلة! يجب إنزال جميع الطلاب أو تسجيل غيابهم.'),
-                            backgroundColor: Colors.orange,
-                          ));
-                        }
-                      },
-                      child: Container(
+                  Row(
+                    children: [
+                      Expanded(
+                        child: GestureDetector(
+                            onTap: () {
+                              if (!isTracking) {
+                                _toggleTracking(); // بدء الرحلة متاح دائماً
+                              } else if (canEndTrip) {
+                                _toggleTracking(); // إنهاء الرحلة (إذا تحققت الشروط)
+                              } else {
+                                // إظهار تنبيه يوضح سبب القفل
+                                ScaffoldMessenger.of(context)
+                                    .showSnackBar(SnackBar(
+                                  content: Text(isMorningTrip
+                                      ? '🔒 لا يمكن إنهاء الرحلة! يجب الاقتراب من المدرسة مسافة 300 متر.'
+                                      : '🔒 لا يمكن إنهاء الرحلة! يجب إنزال جميع الطلاب أو تسجيل غيابهم.'),
+                                  backgroundColor: Colors.orange,
+                                ));
+                              }
+                            },
+                            child: Container(
+                                height: 55,
+                                decoration: BoxDecoration(
+                                    // تغيير لون الزر لرمادي إذا كان مقفلاً
+                                    color: !isTracking
+                                        ? Colors.blueAccent
+                                        : (canEndTrip
+                                            ? Colors.redAccent
+                                            : Colors.grey.shade700),
+                                    borderRadius: BorderRadius.circular(15)),
+                                child: Center(
+                                    child: Text(
+                                        !isTracking
+                                            ? 'بدء الرحلة والتتبع'
+                                            : (canEndTrip
+                                                ? 'إنهـاء الرحلـة'
+                                                : 'إنهـاء الرحلـة (مقفل)'),
+                                        style: TextStyle(
+                                            fontSize: 18,
+                                            color: !isTracking || canEndTrip
+                                                ? Colors.white
+                                                : Colors.grey.shade400,
+                                            fontWeight: FontWeight.bold))))),
+                      ),
+                      // 🌟 زر الطوارئ الجديد (يظهر فقط أثناء الرحلة)
+                      if (isTracking) ...[
+                        const SizedBox(width: 10),
+                        Container(
                           height: 55,
+                          width: 55,
                           decoration: BoxDecoration(
-                              // تغيير لون الزر لرمادي إذا كان مقفلاً
-                              color: !isTracking
-                                  ? Colors.blueAccent
-                                  : (canEndTrip
-                                      ? Colors.redAccent
-                                      : Colors.grey.shade700),
+                              color: Colors.red,
                               borderRadius: BorderRadius.circular(15)),
-                          child: Center(
-                              child: Text(
-                                  !isTracking
-                                      ? 'بدء الرحلة والتتبع'
-                                      : (canEndTrip
-                                          ? 'إنهـاء الرحلـة'
-                                          : 'إنهـاء الرحلـة (مقفل)'),
-                                  style: TextStyle(
-                                      fontSize: 18,
-                                      color: !isTracking || canEndTrip
-                                          ? Colors.white
-                                          : Colors.grey.shade400,
-                                      fontWeight: FontWeight.bold))))),
+                          child: IconButton(
+                            icon: const Icon(Icons.warning_amber_rounded,
+                                color: Colors.white, size: 28),
+                            onPressed: () {
+                              // إرسال الإشعار لجميع الآباء
+                              _sendNotification(
+                                  'emergency',
+                                  '⚠️ عطل أو تأخير طارئ في مسار الحافلة!',
+                                  null);
+                              ScaffoldMessenger.of(context)
+                                  .showSnackBar(const SnackBar(
+                                content: Text(
+                                    'تم إرسال تنبيه التأخير لجميع الركاب.'),
+                                backgroundColor: Colors.red,
+                              ));
+                            },
+                          ),
+                        )
+                      ]
+                    ],
+                  ),
                   const SizedBox(height: 15),
                   Expanded(
                       child: ListView.builder(
@@ -1211,7 +1256,13 @@ class _ParentDashboardState extends State<ParentDashboard> {
       bgColor = Colors.orange;
       icon = Icons.warning_amber_rounded;
       notificationTitle = '⚠️ الحافلة تقترب!';
-    } else if (type == 'student_boarded') {
+    } else if (type == 'emergency') {
+      // 🌟 بداية السطر الجديد
+      bgColor = Colors.red;
+      icon = Icons.warning;
+      notificationTitle = '🚨 تنبيه طارئ!';
+    } // 🌟 نهاية السطر الجديد
+    else if (type == 'student_boarded') {
       bgColor = Colors.green;
       icon = Icons.check_circle;
       notificationTitle = '✅ تأكيد صعود';
@@ -1275,9 +1326,37 @@ class _ParentDashboardState extends State<ParentDashboard> {
                 Navigator.pushReplacement(context,
                     MaterialPageRoute(builder: (_) => const LoginScreen()));
               }),
-          title: Text('ولي أمر: ${widget.studentData['name'].split(' ')[0]}',
+          title: Text('ولي أمر: ${widget.studentData['name']}',
               style: const TextStyle(fontSize: 14)),
           actions: [
+            // 🌟 الزر الجديد للاتصال بالسائق
+            // 🌟 الزر الجديد للاتصال بمشرف الباص المخصص
+            IconButton(
+              icon: const Icon(Icons.phone, color: Colors.greenAccent),
+              onPressed: () async {
+                // جلب رقم مشرف الحافلة الخاصة بهذا الطالب تحديداً من قاعدة البيانات
+                final String? phone = widget.studentData['driverPhone'];
+
+                if (phone != null && phone.isNotEmpty) {
+                  final Uri url = Uri.parse('tel:$phone');
+                  try {
+                    // فتح لوحة اتصال الهاتف مع وضع الرقم تلقائياً
+                    await launchUrl(url);
+                  } catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('عذراً، لم نتمكن من فتح تطبيق الاتصال.'),
+                      backgroundColor: Colors.red,
+                    ));
+                  }
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('رقم المشرف غير متوفر حالياً.'),
+                    backgroundColor: Colors.orange,
+                  ));
+                }
+              },
+            ),
+            // نهاية زر الاتصال
             IconButton(
                 icon: Icon(
                     isReturnTrip ? Icons.nightlight_round : Icons.wb_sunny,
@@ -1397,11 +1476,29 @@ class _AdminDashboardState extends State<AdminDashboard> {
   late IO.Socket socket;
   String? selectedTrackedBusId;
   List<LatLng> adminStreetRoute = [];
+  List<dynamic> tripLogs = []; // 🌟 قائمة سجل الرحلات
 
   @override
   void initState() {
     super.initState();
     _initAdminSocket();
+    _fetchTripLogs(); // 🌟 جلب السجلات عند فتح لوحة الإدارة
+  }
+
+  // 🌟 الدالة الجديدة لجلب سجلات الرحلات من السيرفر
+  Future<void> _fetchTripLogs() async {
+    try {
+      final response = await http.get(Uri.parse('$serverUrl/api/trip-logs'));
+      if (response.statusCode == 200) {
+        if (mounted) {
+          setState(() {
+            tripLogs = json.decode(response.body);
+          });
+        }
+      }
+    } catch (e) {
+      print('Error fetching trip logs: $e');
+    }
   }
 
   void _initAdminSocket() {
@@ -2464,6 +2561,132 @@ class _AdminDashboardState extends State<AdminDashboard> {
             }));
   }
 
+// 🌟 الشاشة الجديدة لعرض التقارير (سجل الرحلات والغياب)
+  Widget _buildReportsView() {
+    final absentStudents =
+        globalStudents.where((s) => (s['absenceCount'] ?? 0) > 0).toList();
+    absentStudents.sort(
+        (a, b) => (b['absenceCount'] ?? 0).compareTo(a['absenceCount'] ?? 0));
+
+    return DefaultTabController(
+      length: 2,
+      child: Column(
+        children: [
+          const TabBar(
+            indicatorColor: Colors.blueAccent,
+            labelColor: Colors.blueAccent,
+            unselectedLabelColor: Colors.grey,
+            tabs: [
+              Tab(icon: Icon(Icons.history), text: 'سجل الرحلات'),
+              Tab(icon: Icon(Icons.person_off), text: 'الغياب المتكرر'),
+            ],
+          ),
+          Expanded(
+            child: TabBarView(
+              children: [
+                // 1. تبويب سجل الرحلات
+                tripLogs.isEmpty
+                    ? const Center(
+                        child: Text('لا توجد رحلات مسجلة بعد',
+                            style: TextStyle(color: Colors.grey)))
+                    : ListView.builder(
+                        padding: const EdgeInsets.all(15),
+                        itemCount: tripLogs.length,
+                        itemBuilder: (ctx, i) {
+                          final log = tripLogs[i];
+                          final bus = globalBuses.firstWhere(
+                              (b) => b['id'] == log['busId'],
+                              orElse: () => {'number': '؟'});
+
+                          DateTime start =
+                              DateTime.parse(log['startTime']).toLocal();
+                          String startTimeStr =
+                              '${start.hour}:${start.minute.toString().padLeft(2, '0')}';
+                          String endTimeStr = 'مستمرة الآن..';
+                          if (log['endTime'] != null) {
+                            DateTime end =
+                                DateTime.parse(log['endTime']).toLocal();
+                            endTimeStr =
+                                '${end.hour}:${end.minute.toString().padLeft(2, '0')}';
+                          }
+
+                          return Card(
+                            color: const Color(0xFF1E293B),
+                            margin: const EdgeInsets.only(bottom: 10),
+                            child: ListTile(
+                              leading: const CircleAvatar(
+                                  backgroundColor: Colors.blueAccent,
+                                  child: Icon(Icons.directions_bus,
+                                      color: Colors.white)),
+                              title: Text('حافلة ${bus['number']}',
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold)),
+                              subtitle: Text(
+                                  'انطلاق: $startTimeStr | وصول: $endTimeStr',
+                                  style: const TextStyle(
+                                      color: Colors.grey, fontSize: 12)),
+                              trailing: Icon(
+                                log['status'] == 'completed'
+                                    ? Icons.check_circle
+                                    : Icons.sync,
+                                color: log['status'] == 'completed'
+                                    ? Colors.green
+                                    : Colors.orangeAccent,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                // 2. تبويب الغياب المتكرر
+                absentStudents.isEmpty
+                    ? const Center(
+                        child: Text('لا يوجد غياب مسجل للطلاب',
+                            style: TextStyle(color: Colors.grey)))
+                    : ListView.builder(
+                        padding: const EdgeInsets.all(15),
+                        itemCount: absentStudents.length,
+                        itemBuilder: (ctx, i) {
+                          final student = absentStudents[i];
+                          return Card(
+                            color: const Color(0xFF1E293B),
+                            margin: const EdgeInsets.only(bottom: 10),
+                            child: ListTile(
+                              leading: const CircleAvatar(
+                                  backgroundColor: Colors.redAccent,
+                                  child: Icon(Icons.person_off,
+                                      color: Colors.white)),
+                              title: Text(student['name'],
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold)),
+                              subtitle: Text(
+                                  'رقم الولي: ${student['parentPhone']}',
+                                  style: const TextStyle(
+                                      color: Colors.grey, fontSize: 12)),
+                              trailing: Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                    color: Colors.redAccent.withOpacity(0.2),
+                                    borderRadius: BorderRadius.circular(10)),
+                                child: Text(
+                                    'غاب ${student['absenceCount']} مرات',
+                                    style: const TextStyle(
+                                        color: Colors.redAccent,
+                                        fontWeight: FontWeight.bold)),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -2482,10 +2705,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
         body: IndexedStack(index: _currentIndex, children: [
           _buildMapAndTrackingView(),
           _buildStudentsDatabaseView(),
-          _buildDriversDatabaseView()
+          _buildDriversDatabaseView(),
+          _buildReportsView() // 🌟 إضافة شاشة التقارير هنا
         ]),
         bottomNavigationBar: BottomNavigationBar(
             backgroundColor: const Color(0xFF1E293B),
+            type: BottomNavigationBarType
+                .fixed, // 🌟 ضروري ليظهر الشريط بشكل صحيح عند إضافة زر رابع
             selectedItemColor: Colors.blueAccent,
             unselectedItemColor: Colors.grey,
             currentIndex: _currentIndex,
@@ -2495,7 +2721,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
               BottomNavigationBarItem(
                   icon: Icon(Icons.school), label: 'الطلاب'),
               BottomNavigationBarItem(
-                  icon: Icon(Icons.drive_eta), label: 'المشرفون')
+                  icon: Icon(Icons.drive_eta), label: 'المشرفون'),
+              BottomNavigationBarItem(
+                  icon: Icon(Icons.analytics),
+                  label: 'التقارير') // 🌟 الزر الجديد
             ]));
   }
 }

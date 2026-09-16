@@ -18,20 +18,31 @@ jobs:
         with:
           channel: 'stable'
           
-      - run: flutter pub get
+      - name: Install Dependencies
+        run: flutter pub get
       
-      - run: flutter build appbundle --release --android-skip-build-dependency-validation
-
+      # 🌟 توليد الأيقونات أولاً قبل أي عملية بناء
+      - name: Generate App Icons
+        run: flutter pub run flutter_launcher_icons
+        
+      # بناء ملف AAB للمتجر
+      - name: Build AAB
+        run: flutter build appbundle --release --android-skip-build-dependency-validation
+        
+      # بناء ملف APK للهاتف
       - name: Build APK
         run: flutter build apk --release --android-skip-build-dependency-validation
 
+      # رفع ملف APK
       - name: Upload APK Release
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
           path: build/app/outputs/flutter-apk/app-release.apk
       
-      - uses: actions/upload-artifact@v4
+      # رفع ملف AAB
+      - name: Upload AAB Release
+        uses: actions/upload-artifact@v4
         with:
           name: app-release
           path: build/app/outputs/bundle/release/app-release.aab

@@ -26,6 +26,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/icon.png
 
 # 🌟 قسم الأيقونة يجب أن يكون في الجذر الأساسي وليس متداخلاً
 flutter_launcher_icons:

@@ -366,6 +366,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
+  // نفس دالة تسجيل الدخول السابقة بدون أي تغيير في المنطق
   void _attemptLogin() async {
     String enteredName = _usernameController.text.trim();
     String enteredPass = _passwordController.text.trim();
@@ -440,81 +441,139 @@ class _LoginScreenState extends State<LoginScreen> {
         backgroundColor: Colors.redAccent));
   }
 
+  // 🌟 تصميم الواجهة الجديد كلياً 🌟
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0F172A),
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(30),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.directions_bus,
-                  size: 100, color: Colors.blueAccent),
-              const SizedBox(height: 20),
-              const Text('نظام مسارك',
-                  style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white)),
-              const Text('تسجيل الدخول الموحد',
-                  style: TextStyle(fontSize: 16, color: Colors.grey)),
-              const SizedBox(height: 40),
-              TextField(
-                controller: _usernameController,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  labelText: 'اسم المستخدم',
-                  labelStyle: const TextStyle(color: Colors.blueAccent),
-                  prefixIcon:
-                      const Icon(Icons.person, color: Colors.blueAccent),
-                  enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(15),
-                      borderSide: const BorderSide(color: Colors.grey)),
-                  focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(15),
-                      borderSide: const BorderSide(color: Colors.blueAccent)),
-                ),
-              ),
-              const SizedBox(height: 20),
-              TextField(
-                controller: _passwordController,
-                obscureText: true,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  labelText: 'كلمة المرور',
-                  labelStyle: const TextStyle(color: Colors.blueAccent),
-                  prefixIcon: const Icon(Icons.lock, color: Colors.blueAccent),
-                  enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(15),
-                      borderSide: const BorderSide(color: Colors.grey)),
-                  focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(15),
-                      borderSide: const BorderSide(color: Colors.blueAccent)),
-                ),
-              ),
-              const SizedBox(height: 40),
-              SizedBox(
-                width: double.infinity,
-                height: 55,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blueAccent,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15)),
-                  ),
-                  onPressed: _attemptLogin,
-                  child: const Text('تسجيل الدخول',
-                      style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white)),
-                ),
-              ),
-            ],
+      body: Container(
+        // إضافة تدرج لوني أنيق للخلفية
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
         ),
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 50),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // 🌟 الشعار مع تأثير التوهج (مكان الأيقونة القديمة)
+                Container(
+                  padding: const EdgeInsets.all(5),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.blueAccent.withOpacity(0.3),
+                        blurRadius: 30,
+                        spreadRadius: 5,
+                      ),
+                    ],
+                  ),
+                  child: ClipOval(
+                    child: Image.asset(
+                      'assets/icon.png',
+                      height: 160,
+                      width: 160,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 50),
+
+                // 🌟 حقل اسم المستخدم
+                _buildModernTextField(
+                  controller: _usernameController,
+                  label: 'اسم المستخدم',
+                  icon: Icons.person_outline,
+                ),
+                const SizedBox(height: 20),
+
+                // 🌟 حقل كلمة المرور
+                _buildModernTextField(
+                  controller: _passwordController,
+                  label: 'كلمة المرور',
+                  icon: Icons.lock_outline,
+                  isPassword: true,
+                ),
+                const SizedBox(height: 40),
+
+                // 🌟 زر الدخول المتدرج
+                SizedBox(
+                  width: double.infinity,
+                  height: 60,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Colors.blueAccent, Color(0xFF3B82F6)],
+                      ),
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.blueAccent.withOpacity(0.4),
+                          blurRadius: 15,
+                          offset: const Offset(0, 5),
+                        )
+                      ],
+                    ),
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        shadowColor: Colors.transparent,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                      ),
+                      onPressed: _attemptLogin,
+                      child: const Text(
+                        'تسجيل الدخول',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                          letterSpacing: 1.0,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // دالة مساعدة لرسم حقول الإدخال بشكل عصري
+  Widget _buildModernTextField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    bool isPassword = false,
+  }) {
+    return TextField(
+      controller: controller,
+      obscureText: isPassword,
+      style: const TextStyle(color: Colors.white, fontSize: 16),
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle: TextStyle(color: Colors.grey.shade400),
+        prefixIcon: Icon(icon, color: Colors.blueAccent, size: 22),
+        filled: true,
+        fillColor: const Color(0xFF1E293B).withOpacity(0.7), // خلفية الحقل
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(20),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(20),
+          borderSide: const BorderSide(color: Colors.blueAccent, width: 1.5),
+        ),
+        contentPadding: const EdgeInsets.symmetric(vertical: 20),
       ),
     );
   }

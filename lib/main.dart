@@ -2685,13 +2685,63 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                   'انطلاق: $startTimeStr | وصول: $endTimeStr',
                                   style: const TextStyle(
                                       color: Colors.grey, fontSize: 12)),
-                              trailing: Icon(
-                                log['status'] == 'completed'
-                                    ? Icons.check_circle
-                                    : Icons.sync,
-                                color: log['status'] == 'completed'
-                                    ? Colors.green
-                                    : Colors.orangeAccent,
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    log['status'] == 'completed'
+                                        ? Icons.check_circle
+                                        : Icons.sync,
+                                    color: log['status'] == 'completed'
+                                        ? Colors.green
+                                        : Colors.orangeAccent,
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete, color: Colors.redAccent),
+                                    onPressed: () async {
+                                      // إضافة نافذة تأكيد قبل الحذف كإجراء احترافي
+                                      bool? confirm = await showDialog(
+                                        context: context,
+                                        builder: (ctx) => AlertDialog(
+                                          backgroundColor: const Color(0xFF1E293B),
+                                          title: const Text('تأكيد الحذف', style: TextStyle(color: Colors.white)),
+                                          content: const Text('هل أنت متأكد من رغبتك في حذف سجل هذه الرحلة؟', style: TextStyle(color: Colors.grey)),
+                                          actions: [
+                                            TextButton(
+                                              onPressed: () => Navigator.pop(ctx, false),
+                                              child: const Text('إلغاء', style: TextStyle(color: Colors.grey)),
+                                            ),
+                                            ElevatedButton(
+                                              style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                                              onPressed: () => Navigator.pop(ctx, true),
+                                              child: const Text('حذف', style: TextStyle(color: Colors.white)),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+
+                                      if (confirm == true) {
+                                        try {
+                                          final response = await http.delete(
+                                              Uri.parse('$serverUrl/api/trip-logs/${log['_id']}'));
+                                          if (response.statusCode == 200) {
+                                            setState(() {
+                                              tripLogs.removeAt(i);
+                                            });
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              const SnackBar(
+                                                content: Text('تم حذف الرحلة بنجاح'),
+                                                backgroundColor: Colors.green,
+                                              ),
+                                            );
+                                          }
+                                        } catch (e) {
+                                          print('خطأ في حذف الرحلة: $e');
+                                        }
+                                      }
+                                    },
+                                  ),
+                                ],
                               ),
                             ),
                           );

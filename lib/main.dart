@@ -1139,7 +1139,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
 }
 
 // ==========================================
-// 3. شاشة ولي الأمر
+// 3. شاشة ولي الأمر المحدثة
 // ==========================================
 class ParentDashboard extends StatefulWidget {
   final Map<String, dynamic> studentData;
@@ -1280,17 +1280,14 @@ class _ParentDashboardState extends State<ParentDashboard> {
       icon = Icons.warning_amber_rounded;
       notificationTitle = '⚠️ الحافلة تقترب!';
     } else if (type == 'emergency') {
-      // 🌟 بداية السطر الجديد
       bgColor = Colors.red;
       icon = Icons.warning;
       notificationTitle = '🚨 تنبيه طارئ!';
-    } // 🌟 نهاية السطر الجديد
-    else if (type == 'student_boarded') {
+    } else if (type == 'student_boarded') {
       bgColor = Colors.green;
       icon = Icons.check_circle;
       notificationTitle = '✅ تأكيد صعود';
     } else if (type == 'student_dropped_off') {
-      // <--- الإضافة الجديدة
       bgColor = Colors.teal;
       icon = Icons.home;
       notificationTitle = '🏠 تأكيد نزول';
@@ -1329,6 +1326,46 @@ class _ParentDashboardState extends State<ParentDashboard> {
             RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))));
   }
 
+  // 🌟 دالة إرسال إشعار الغياب المسبق للسائق
+  void _reportAbsence() async {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        title: const Text('تأكيد الغياب', style: TextStyle(color: Colors.white)),
+        content: const Text('هل أنت متأكد من رغبتك في تبليغ السائق بغياب الطالب ليوم غد/اليوم؟', style: TextStyle(color: Colors.grey)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              setState(() {
+                widget.studentData['status'] = 'absent';
+              });
+              if (isConnected) {
+                socket.emit('busEvent', {
+                  'busId': widget.studentData['busId'],
+                  'type': 'student_absent',
+                  'studentId': widget.studentData['id'],
+                  'msg': 'اعتذار مسبق: ولي أمر ${widget.studentData['name']} أبلغ عن غياب الطالب اليوم.'
+                });
+              }
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text('✅ تم إرسال إشعار الغياب للسائق بنجاح.'),
+                backgroundColor: Colors.green,
+              ));
+            },
+            child: const Text('تأكيد الغياب', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _routeTimer?.cancel();
@@ -1338,6 +1375,8 @@ class _ParentDashboardState extends State<ParentDashboard> {
 
   @override
   Widget build(BuildContext context) {
+    String currentStatus = widget.studentData['status'] ?? 'waiting';
+
     return Scaffold(
       appBar: AppBar(
           backgroundColor: const Color(0xFF1E293B),
@@ -1345,41 +1384,19 @@ class _ParentDashboardState extends State<ParentDashboard> {
               icon: const Icon(Icons.logout, color: Colors.white),
               onPressed: () async {
                 final prefs = await SharedPreferences.getInstance();
-                await prefs.clear(); // هذا الأمر سيمسح الذاكرة ويخرجك نهائياً
+                await prefs.clear(); 
                 Navigator.pushReplacement(context,
                     MaterialPageRoute(builder: (_) => const LoginScreen()));
               }),
           title: Text('ولي أمر: ${widget.studentData['name']}',
               style: const TextStyle(fontSize: 14)),
           actions: [
-            // 🌟 الزر الجديد للاتصال بالسائق
-            // 🌟 الزر الجديد للاتصال بمشرف الباص المخصص
+            // 🌟 1. زر تبليغ عن غياب مسبق في الشريط العلوي
             IconButton(
-              icon: const Icon(Icons.phone, color: Colors.greenAccent),
-              onPressed: () async {
-                // جلب رقم مشرف الحافلة الخاصة بهذا الطالب تحديداً من قاعدة البيانات
-                final String? phone = widget.studentData['driverPhone'];
-
-                if (phone != null && phone.isNotEmpty) {
-                  final Uri url = Uri.parse('tel:$phone');
-                  try {
-                    // فتح لوحة اتصال الهاتف مع وضع الرقم تلقائياً
-                    await launchUrl(url);
-                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                      content: Text('عذراً، لم نتمكن من فتح تطبيق الاتصال.'),
-                      backgroundColor: Colors.red,
-                    ));
-                  }
-                } else {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                    content: Text('رقم المشرف غير متوفر حالياً.'),
-                    backgroundColor: Colors.orange,
-                  ));
-                }
-              },
+              icon: const Icon(Icons.person_off, color: Colors.orangeAccent),
+              tooltip: 'تبليغ عن غياب',
+              onPressed: _reportAbsence,
             ),
-            // نهاية زر الاتصال
             IconButton(
                 icon: Icon(
                     isReturnTrip ? Icons.nightlight_round : Icons.wb_sunny,
@@ -1432,12 +1449,55 @@ class _ParentDashboardState extends State<ParentDashboard> {
                     child: premiumBusIcon()),
               ]),
             ]),
+
+        // 🌟 2. شريط الحالة البصري (Timeline Tracker) أعلى الخريطة
         Positioned(
-            bottom: 90,
+          top: 15,
+          left: 15,
+          right: 15,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 15),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E293B).withOpacity(0.95),
+              borderRadius: BorderRadius.circular(15),
+              border: Border.all(color: Colors.blueAccent.withOpacity(0.3)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _buildTimelineStep(
+                  title: 'في الانتظار',
+                  icon: Icons.hourglass_empty,
+                  isActive: currentStatus == 'waiting',
+                  isCompleted: currentStatus == 'boarded' || currentStatus == 'absent',
+                ),
+                _buildTimelineLine(),
+                _buildTimelineStep(
+                  title: currentStatus == 'absent' ? 'غائب اليوم' : 'صعد للحافلة',
+                  icon: currentStatus == 'absent' ? Icons.cancel : Icons.directions_bus,
+                  isActive: currentStatus == 'boarded',
+                  isCompleted: currentStatus == 'dropped_off',
+                  isAlert: currentStatus == 'absent',
+                ),
+                _buildTimelineLine(),
+                _buildTimelineStep(
+                  title: 'تم الوصول',
+                  icon: Icons.check_circle_outline,
+                  isActive: currentStatus == 'dropped_off',
+                  isCompleted: false,
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        // لوحة المعلومات السفلية (المسافة والوقت)
+        Positioned(
+            bottom: 110,
             left: 15,
             right: 15,
             child: Container(
-                padding: const EdgeInsets.all(15),
+                padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                     color: const Color(0xFF0F172A).withOpacity(0.9),
                     borderRadius: BorderRadius.circular(20),
@@ -1448,25 +1508,25 @@ class _ParentDashboardState extends State<ParentDashboard> {
                     children: [
                       Column(children: [
                         const Text('المسافة',
-                            style: TextStyle(color: Colors.grey, fontSize: 12)),
+                            style: TextStyle(color: Colors.grey, fontSize: 11)),
                         Text(distanceText,
                             style: const TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,
-                                fontSize: 18))
+                                fontSize: 16))
                       ]),
                       Column(children: [
-                        const Text('الوقت',
-                            style: TextStyle(color: Colors.grey, fontSize: 12)),
+                        const Text('الوقت المتوقع',
+                            style: TextStyle(color: Colors.grey, fontSize: 11)),
                         Text(etaText,
                             style: const TextStyle(
                                 color: Colors.greenAccent,
                                 fontWeight: FontWeight.bold,
-                                fontSize: 18))
+                                fontSize: 16))
                       ]),
                       Column(children: [
-                        const Text('الهدف',
-                            style: TextStyle(color: Colors.grey, fontSize: 12)),
+                        const Text('الوجهة',
+                            style: TextStyle(color: Colors.grey, fontSize: 11)),
                         Text(
                             isReturnTrip
                                 ? 'المنزل'
@@ -1476,10 +1536,120 @@ class _ParentDashboardState extends State<ParentDashboard> {
                             style: const TextStyle(
                                 color: Colors.blueAccent,
                                 fontWeight: FontWeight.bold,
-                                fontSize: 16))
+                                fontSize: 14))
                       ])
                     ]))),
+
+        // 🌟 3. بطاقة المشرف المنبثقة السفلية (Driver Info Card)
+        Positioned(
+          bottom: 15,
+          left: 15,
+          right: 15,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E293B),
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: const [
+                BoxShadow(color: Colors.black45, blurRadius: 10, offset: Offset(0, 4))
+              ],
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    const CircleAvatar(
+                      radius: 20,
+                      backgroundColor: Colors.blueAccent,
+                      child: Icon(Icons.person, color: Colors.white),
+                    ),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'المشرف: ${widget.studentData['driverName'] ?? 'غير محدد'}',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'حافلة رقم: ${widget.studentData['busNumber'] ?? '؟'}',
+                          style: const TextStyle(color: Colors.grey, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                // زر الاتصال المباشر بالمشرف
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  ),
+                  icon: const Icon(Icons.phone, color: Colors.white, size: 16),
+                  label: const Text('اتصال', style: TextStyle(color: Colors.white, fontSize: 12)),
+                  onPressed: () async {
+                    final String? phone = widget.studentData['driverPhone'];
+                    if (phone != null && phone.isNotEmpty) {
+                      final Uri url = Uri.parse('tel:$phone');
+                      try {
+                        await launchUrl(url);
+                      } catch (e) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                          content: Text('تعذر فتح تطبيق الاتصال'),
+                          backgroundColor: Colors.red,
+                        ));
+                      }
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text('رقم المشرف غير متوفر حالياً'),
+                        backgroundColor: Colors.orange,
+                      ));
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
       ]),
+    );
+  }
+
+  // دوال مساعدة لرسم خطوات شريط الحالة البصري
+  Widget _buildTimelineStep({required String title, required IconData icon, required bool isActive, required bool isCompleted, bool isAlert = false}) {
+    Color color = Colors.grey;
+    if (isAlert) color = Colors.redAccent;
+    else if (isActive) color = Colors.blueAccent;
+    else if (isCompleted) color = Colors.green;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: color.withOpacity(0.2),
+            border: Border.all(color: color, width: 2),
+          ),
+          child: Icon(icon, color: color, size: 16),
+        ),
+        const SizedBox(height: 4),
+        Text(title, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
+      ],
+    );
+  }
+
+  Widget _buildTimelineLine() {
+    return Expanded(
+      child: Container(
+        height: 2,
+        color: Colors.grey.withOpacity(0.4),
+        margin: const EdgeInsets.symmetric(horizontal: 5),
+      ),
     );
   }
 }
@@ -1984,7 +2154,14 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                   labelStyle:
                                       TextStyle(color: Colors.blueAccent)),
                               onChanged: (val) => addr = val)),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 5),
+                      // 🌟 الزر الجديد: يظهر فقط إذا كان للطالب موقع مثبت
+                      if (homeLocation != null)
+                        IconButton(
+                          icon: const Icon(Icons.location_off, color: Colors.redAccent),
+                          tooltip: 'حذف الموقع المثبت',
+                          onPressed: () => setStateDialog(() => homeLocation = null),
+                        ),
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
                             backgroundColor: homeLocation != null

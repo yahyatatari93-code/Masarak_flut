@@ -342,7 +342,7 @@ class _MasarakAppState extends State<MasarakApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'المدرسة الوطنية الذكية',
+      title: 'المدرسة الوطنية ',
       theme: ThemeData(
           brightness: Brightness.dark,
           scaffoldBackgroundColor: const Color(0xFF0F172A),
@@ -2683,7 +2683,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ])))
     ]);
   }
-  
+
   Widget _buildStudentsDatabaseView() {
     final unassignedStudents = globalStudents
         .where((s) => s['busId'] == null || s['busId'] == '')

@@ -379,7 +379,10 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    if (enteredName == 'admin' && enteredPass == 'admin') {
+    // 🌟 جلب كلمة مرور الإدارة المحفوظة (وإذا لم تكن موجودة تكون admin)
+    String savedAdminPass = prefs.getString('admin_password') ?? 'admin';
+
+    if (enteredName == 'admin' && enteredPass == savedAdminPass) {
       await prefs.setString('role', 'admin');
       Navigator.pushReplacement(
           context, MaterialPageRoute(builder: (_) => const AdminDashboard()));
@@ -388,14 +391,16 @@ class _LoginScreenState extends State<LoginScreen> {
 
     var foundBus = globalBuses.firstWhere((b) => b['driverName'] == enteredName,
         orElse: () => {});
-    if (foundBus.isNotEmpty && enteredPass == '1234') {
+    String driverPass = foundBus['password']?.toString() ?? '1234';
+    
+    if (foundBus.isNotEmpty && enteredPass == driverPass) {
       await prefs.setString('role', 'driver');
-      await prefs.setString('busId', foundBus['id'].toString());
+      await prefs.setString('busId', (foundBus['id'] ?? foundBus['_id']).toString());
       Navigator.pushReplacement(
           context,
           MaterialPageRoute(
               builder: (_) =>
-                  DriverDashboard(busId: foundBus['id'].toString())));
+                  DriverDashboard(busId: (foundBus['id'] ?? foundBus['_id']).toString())));
       return;
     }
 
@@ -404,7 +409,7 @@ class _LoginScreenState extends State<LoginScreen> {
     if (foundStudent.isNotEmpty) {
       if (foundStudent['password'] == enteredPass) {
         var assignedBus =
-            globalBuses.firstWhere((b) => b['id'] == foundStudent['busId'],
+            globalBuses.firstWhere((b) => (b['id'] ?? b['_id']).toString() == foundStudent['busId'].toString(),
                 orElse: () => {
                       'number': '؟',
                       'driverName': 'غير محدد',
@@ -420,7 +425,7 @@ class _LoginScreenState extends State<LoginScreen> {
         };
 
         await prefs.setString('role', 'parent');
-        await prefs.setString('studentId', foundStudent['id']);
+        await prefs.setString('studentId', (foundStudent['id'] ?? foundStudent['_id']).toString());
         await prefs.setString('busId', foundStudent['busId'] ?? '');
         Navigator.pushReplacement(
             context,
@@ -650,7 +655,11 @@ class _DriverDashboardState extends State<DriverDashboard> {
       'autoConnect': false
     });
     socket.connect();
-    socket.onConnect((_) => setState(() => isConnected = true));
+    socket.onConnect((_) {
+  if (mounted) {
+    setState(() => isConnected = true);
+  }
+});
     socket.onDisconnect((_) => setState(() => isConnected = false));
   }
 
@@ -779,6 +788,51 @@ class _DriverDashboardState extends State<DriverDashboard> {
     super.dispose();
   }
 
+void _changeDriverPassword() {
+    String newPass = '';
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        title: const Text('تغيير كلمة المرور', style: TextStyle(color: Colors.white)),
+        content: TextField(
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+              labelText: 'كلمة المرور الجديدة', labelStyle: TextStyle(color: Colors.blueAccent)),
+          onChanged: (val) => newPass = val,
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('إلغاء', style: TextStyle(color: Colors.grey))),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            onPressed: () async {
+              if (newPass.isNotEmpty) {
+                try {
+                  // تحديث كلمة المرور في السيرفر باستخدام الـ busId
+                  final response = await http.put(
+                    Uri.parse('$serverUrl/api/buses/${widget.busId}'),
+                    headers: {'Content-Type': 'application/json'},
+                    body: json.encode({'password': newPass}),
+                  );
+                  if (response.statusCode == 200) {
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('تم تغيير كلمة المرور بنجاح!'), backgroundColor: Colors.green));
+                  }
+                } catch (e) {
+                  print('خطأ في تغيير كلمة المرور: $e');
+                }
+              }
+            },
+            child: const Text('حفظ', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     List busStudents =
@@ -833,11 +887,19 @@ class _DriverDashboardState extends State<DriverDashboard> {
                     MaterialPageRoute(builder: (_) => const LoginScreen()));
               }),
           title: Text(
-              'المشرف ${globalBuses.firstWhere((b) => b['id'] == widget.busId, orElse: () => {
+              'المشرف ${globalBuses.firstWhere((b) => (b['id'] ?? b['_id']).toString() == widget.busId, orElse: () => {
                     'driverName': ''
                   })['driverName']}',
               style: const TextStyle(fontSize: 14)),
+          // 🌟 قائمة actions واحدة تحتوي على الزرين معاً
           actions: [
+            // الزر الأول: تغيير كلمة المرور
+            IconButton(
+              icon: const Icon(Icons.vpn_key, color: Colors.orangeAccent),
+              tooltip: 'تغيير كلمة المرور',
+              onPressed: _changeDriverPassword,
+            ),
+            // الزر الثاني: اختيار (ذهاب / عودة)
             if (!isTracking)
               TextButton.icon(
                   icon: Icon(
@@ -1373,6 +1435,54 @@ class _ParentDashboardState extends State<ParentDashboard> {
     super.dispose();
   }
 
+// 🌟 دالة تغيير كلمة مرور ولي الأمر / الطالب
+  void _changeParentPassword() {
+    String newPass = '';
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        title: const Text('تغيير كلمة المرور', style: TextStyle(color: Colors.white)),
+        content: TextField(
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+              labelText: 'كلمة المرور الجديدة', labelStyle: TextStyle(color: Colors.blueAccent)),
+          onChanged: (val) => newPass = val,
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('إلغاء', style: TextStyle(color: Colors.grey))),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            onPressed: () async {
+              if (newPass.isNotEmpty) {
+                try {
+                  // استخراج الـ ID الخاص بالطالب
+                  final String stId = (widget.studentData['id'] ?? widget.studentData['_id']).toString();
+                  // إرسال الطلب للسيرفر لتحديث كلمة المرور
+                  final response = await http.put(
+                    Uri.parse('$serverUrl/api/students/$stId'),
+                    headers: {'Content-Type': 'application/json'},
+                    body: json.encode({'password': newPass}),
+                  );
+                  if (response.statusCode == 200) {
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('تم تغيير كلمة المرور بنجاح!'), backgroundColor: Colors.green));
+                  }
+                } catch (e) {
+                  print('خطأ في تغيير كلمة المرور: $e');
+                }
+              }
+            },
+            child: const Text('حفظ', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     String currentStatus = widget.studentData['status'] ?? 'waiting';
@@ -1390,13 +1500,21 @@ class _ParentDashboardState extends State<ParentDashboard> {
               }),
           title: Text('ولي أمر: ${widget.studentData['name']}',
               style: const TextStyle(fontSize: 14)),
+          // 🌟 قائمة الأزرار مجمعة هنا
           actions: [
-            // 🌟 1. زر تبليغ عن غياب مسبق في الشريط العلوي
+            // 🌟 1. زر تغيير كلمة المرور الجديد (المفتاح)
+            IconButton(
+              icon: const Icon(Icons.vpn_key, color: Colors.blueAccent),
+              tooltip: 'تغيير كلمة المرور',
+              onPressed: _changeParentPassword,
+            ),
+            // 🌟 2. زر تبليغ عن غياب مسبق
             IconButton(
               icon: const Icon(Icons.person_off, color: Colors.orangeAccent),
               tooltip: 'تبليغ عن غياب',
               onPressed: _reportAbsence,
             ),
+            // 3. زر تبديل الرحلة (ذهاب/عودة)
             IconButton(
                 icon: Icon(
                     isReturnTrip ? Icons.nightlight_round : Icons.wb_sunny,
@@ -1407,11 +1525,14 @@ class _ParentDashboardState extends State<ParentDashboard> {
                     alertSent = false;
                   });
                 }),
+            // 🌟 هذا هو الكود الذي كان يسبب الخطأ، أدخلناه داخل قائمة actions
             Icon(Icons.circle,
                 color: isConnected ? Colors.greenAccent : Colors.redAccent,
                 size: 14),
-            const SizedBox(width: 15)
-          ]),
+            const SizedBox(width: 15),
+          ], // <-- 🌟 هنا نغلق قائمة actions
+      ), // <-- 🌟 هنا نغلق الـ AppBar
+
       body: Stack(children: [
         FlutterMap(
             mapController: mapController,
@@ -1669,16 +1790,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
   late IO.Socket socket;
   String? selectedTrackedBusId;
   List<LatLng> adminStreetRoute = [];
-  List<dynamic> tripLogs = []; // 🌟 قائمة سجل الرحلات
+  List<dynamic> tripLogs = []; 
 
   @override
   void initState() {
     super.initState();
     _initAdminSocket();
-    _fetchTripLogs(); // 🌟 جلب السجلات عند فتح لوحة الإدارة
+    _fetchTripLogs(); 
   }
 
-  // 🌟 الدالة الجديدة لجلب سجلات الرحلات من السيرفر
   Future<void> _fetchTripLogs() async {
     try {
       final response = await http.get(Uri.parse('$serverUrl/api/trip-logs'));
@@ -1703,11 +1823,12 @@ class _AdminDashboardState extends State<AdminDashboard> {
     socket.on('locationUpdated', (data) {
       if (mounted) {
         setState(() {
-          var busIndex =
-              globalBuses.indexWhere((b) => b['id'] == data['busId']);
-          if (busIndex != -1)
+          var busIndex = globalBuses.indexWhere((b) => 
+              (b['id'] ?? b['_id']).toString() == data['busId'].toString());
+          if (busIndex != -1) {
             globalBuses[busIndex]['location'] =
-                LatLng(data['lat'], data['lng']);
+                LatLng(data['lat'] ?? 36.2150, data['lng'] ?? 37.1450);
+          }
         });
       }
     });
@@ -1903,8 +2024,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       value: sBus,
                       items: globalBuses
                           .map((bus) => DropdownMenuItem<String>(
-                              value: bus['id'].toString(),
-                              child: Text('حافلة ${bus['number']}',
+                              value: (bus['id'] ?? bus['_id']).toString(),
+                              child: Text('حافلة ${bus['number'] ?? '-'}',
                                   style: const TextStyle(color: Colors.white))))
                           .toList(),
                       onChanged: (val) => setStateDialog(() => sBus = val)),
@@ -1920,10 +2041,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       onPressed: () async {
                         if (sName.isNotEmpty && sBus != null) {
                           int newStopNum = int.tryParse(stopNum) ?? 99;
-// التعديل: استثناء الرقم 99 من فحص التكرار
                           bool stopNumberExists = newStopNum != 99 &&
                               globalStudents.any((s) =>
-                                  s['busId'] == sBus &&
+                                  s['busId'].toString() == sBus &&
                                   s['stopNumber'] == newStopNum);
 
                           if (stopNumberExists) {
@@ -1991,10 +2111,12 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
   void _showEditBusDialog(int index) {
     final bus = globalBuses[index];
-    String bNum = bus['number'];
-    String rName = bus['routeName'];
-    String dName = bus['driverName'];
-    String dPhone = bus['driverPhone'];
+    String bNum = bus['number']?.toString() ?? '';
+    String rName = bus['routeName']?.toString() ?? '';
+    String dName = bus['driverName']?.toString() ?? '';
+    String dPhone = bus['driverPhone']?.toString() ?? '';
+    String dPass = bus['password']?.toString() ?? '1234'; // 🌟 جلب كلمة المرور
+
     showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -2031,7 +2153,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         labelText: 'هاتف المشرف',
                         labelStyle: TextStyle(color: Colors.blueAccent)),
                     keyboardType: TextInputType.phone,
-                    onChanged: (val) => dPhone = val)
+                    onChanged: (val) => dPhone = val),
+                // 🌟 خانة كلمة المرور للمشرف
+                TextFormField(
+                    initialValue: dPass,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                        labelText: 'كلمة المرور',
+                        labelStyle: TextStyle(color: Colors.blueAccent)),
+                    onChanged: (val) => dPass = val)
               ])),
               actions: [
                 TextButton(
@@ -2043,14 +2173,16 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         ElevatedButton.styleFrom(backgroundColor: Colors.green),
                     onPressed: () async {
                       try {
+                        final String busId = (bus['id'] ?? bus['_id']).toString();
                         final response = await http.put(
-                          Uri.parse('$serverUrl/api/buses/${bus['id']}'),
+                          Uri.parse('$serverUrl/api/buses/$busId'),
                           headers: {'Content-Type': 'application/json'},
                           body: json.encode({
                             'number': bNum,
                             'routeName': rName,
                             'driverName': dName,
-                            'driverPhone': dPhone
+                            'driverPhone': dPhone,
+                            'password': dPass // 🌟 إرسال كلمة المرور للسيرفر
                           }),
                         );
                         if (response.statusCode == 200) {
@@ -2060,7 +2192,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
                               'number': bNum,
                               'routeName': rName,
                               'driverName': dName,
-                              'driverPhone': dPhone
+                              'driverPhone': dPhone,
+                              'password': dPass
                             };
                           });
                           Navigator.pop(ctx);
@@ -2077,14 +2210,31 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
   void _showEditStudentDialog(int index) {
     final st = globalStudents[index];
-    String sName = st['name'];
-    String seat = st['seat'];
-    String pass = st['password'];
-    String phone = st['parentPhone'];
-    String addr = st['address'];
-    String? sBus = st['busId'];
+    String sName = st['name']?.toString() ?? '';
+    String seat = st['seat']?.toString() ?? '';
+    String pass = st['password']?.toString() ?? '';
+    String phone = st['parentPhone']?.toString() ?? '';
+    String addr = st['address']?.toString() ?? '';
+    
+    // 🌟 الإصلاح السحري للقائمة المنسدلة الذي كان يمنع فتح النافذة
+    String? sBus = st['busId']?.toString().trim();
+    if (sBus == null || sBus.isEmpty || !globalBuses.any((b) => (b['id'] ?? b['_id']).toString() == sBus)) {
+      sBus = null; // إذا لم يجد الباص، يترك الخانة فارغة بدلاً من انهيار النافذة
+    }
+
     String stopNum = (st['stopNumber'] ?? 99).toString();
-    LatLng? homeLocation = st['home'];
+    
+    // 🌟 حماية لقراءة الخريطة
+    LatLng? homeLocation;
+    if (st['home'] != null) {
+      if (st['home'] is LatLng) {
+        homeLocation = st['home'];
+      } else if (st['home'] is Map) {
+        homeLocation = LatLng(
+            (st['home']['lat'] ?? 36.2).toDouble(),
+            (st['home']['lng'] ?? 37.1).toDouble());
+      }
+    }
 
     showDialog(
       context: context,
@@ -2155,12 +2305,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                       TextStyle(color: Colors.blueAccent)),
                               onChanged: (val) => addr = val)),
                       const SizedBox(width: 5),
-                      // 🌟 الزر الجديد: يظهر فقط إذا كان للطالب موقع مثبت
                       if (homeLocation != null)
                         IconButton(
-                          icon: const Icon(Icons.location_off, color: Colors.redAccent),
+                          icon: const Icon(Icons.location_off,
+                              color: Colors.redAccent),
                           tooltip: 'حذف الموقع المثبت',
-                          onPressed: () => setStateDialog(() => homeLocation = null),
+                          onPressed: () =>
+                              setStateDialog(() => homeLocation = null),
                         ),
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
@@ -2193,8 +2344,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       value: sBus,
                       items: globalBuses
                           .map((bus) => DropdownMenuItem<String>(
-                              value: bus['id'].toString(),
-                              child: Text('حافلة ${bus['number']}',
+                              value: (bus['id'] ?? bus['_id']).toString(),
+                              child: Text('حافلة ${bus['number'] ?? '-'}',
                                   style: const TextStyle(color: Colors.white))))
                           .toList(),
                       onChanged: (val) => setStateDialog(() => sBus = val),
@@ -2213,24 +2364,23 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   onPressed: () async {
                     if (sName.isNotEmpty && sBus != null) {
                       int newStopNum = int.tryParse(stopNum) ?? 99;
-// التعديل: استثناء الرقم 99 من فحص التكرار
                       bool stopNumberExists = newStopNum != 99 &&
                           globalStudents.any((s) =>
-                              s['busId'] == sBus &&
+                              s['busId'].toString() == sBus &&
                               s['stopNumber'] == newStopNum &&
-                              s['id'] != st['id']);
+                              (s['id'] ?? s['_id']).toString() != (st['id'] ?? st['_id']).toString());
 
                       if (stopNumberExists) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                                content: Text('⚠️ رقم الموقف محجوز مسبقاً!'),
-                                backgroundColor: Colors.orangeAccent));
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                            content: Text('⚠️ رقم الموقف محجوز مسبقاً!'),
+                            backgroundColor: Colors.orangeAccent));
                         return;
                       }
 
                       try {
+                        final String stId = (st['id'] ?? st['_id']).toString();
                         final response = await http.put(
-                          Uri.parse('$serverUrl/api/students/${st['id']}'),
+                          Uri.parse('$serverUrl/api/students/$stId'),
                           headers: {'Content-Type': 'application/json'},
                           body: json.encode({
                             'name': sName,
@@ -2292,10 +2442,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
     List<Polyline> polylines = [];
 
     if (selectedTrackedBusId != null) {
-      final bus = globalBuses.firstWhere((b) => b['id'] == selectedTrackedBusId,
+      final bus = globalBuses.firstWhere((b) => (b['id'] ?? b['_id']).toString() == selectedTrackedBusId,
           orElse: () => {});
 
-      if (bus.isNotEmpty && bus['location'] != null) {
+      if (bus.isNotEmpty && bus['location'] != null && bus['location'] is LatLng) {
         markers.add(Marker(
             point: bus['location'],
             width: 50,
@@ -2304,13 +2454,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
             child: premiumBusIcon()));
 
         final busStudents = globalStudents
-            .where((s) => s['busId'] == selectedTrackedBusId)
+            .where((s) => s['busId'].toString() == selectedTrackedBusId)
             .toList();
         busStudents.sort(
             (a, b) => (a['stopNumber'] ?? 99).compareTo(b['stopNumber'] ?? 99));
 
         for (var st in busStudents) {
-          if (st['home'] != null) {
+          if (st['home'] != null && st['home'] is LatLng) {
             bool isPassed =
                 st['status'] == 'boarded' || st['status'] == 'absent';
             markers.add(Marker(
@@ -2343,8 +2493,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
         }
       }
     } else {
-      markers.addAll(globalBuses.where((b) => b['location'] != null).map(
-          (bus) => Marker(
+      markers.addAll(globalBuses
+          .where((b) => b['location'] != null && b['location'] is LatLng)
+          .map((bus) => Marker(
               point: bus['location'],
               width: 50,
               height: 50,
@@ -2435,8 +2586,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
                             itemCount: globalBuses.length,
                             itemBuilder: (context, index) {
                               final bus = globalBuses[index];
-                              bool isTrackingThis =
-                                  selectedTrackedBusId == bus['id'];
+                              final String currentBusId = (bus['id'] ?? bus['_id']).toString();
+                              bool isTrackingThis = selectedTrackedBusId == currentBusId;
+                              
                               return Container(
                                   margin: const EdgeInsets.only(bottom: 10),
                                   padding: const EdgeInsets.all(12),
@@ -2447,89 +2599,91 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                           : null,
                                       borderRadius: BorderRadius.circular(10)),
                                   child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceBetween,
                                       children: [
-                                        Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
+                                        // 🌟 1. وضعنا النصوص داخل Expanded لكي لا يختفي الزر
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
                                             children: [
                                               Text(
-                                                  'حافلة ${bus['number']} - ${bus['routeName']}',
+                                                  'حافلة ${bus['number'] ?? '-'} - ${bus['routeName'] ?? 'غير محدد'}',
                                                   style: const TextStyle(
                                                       color: Colors.white,
-                                                      fontWeight:
-                                                          FontWeight.bold)),
+                                                      fontWeight: FontWeight.bold),
+                                                  maxLines: 1, // 🌟 يمنع نزول النص لسطر جديد
+                                                  overflow: TextOverflow.ellipsis, // 🌟 يضع ثلاث نقاط (...)
+                                              ),
+                                              const SizedBox(height: 4),
                                               Text(
-                                                  'المشرف: ${bus['driverName']}',
+                                                  'المشرف: ${bus['driverName'] ?? 'بدون اسم'}',
                                                   style: const TextStyle(
                                                       color: Colors.grey,
-                                                      fontSize: 12))
+                                                      fontSize: 12),
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                              )
                                             ]),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        // 🌟 2. زر المتابعة الذكي (متابعة / إلغاء)
                                         ElevatedButton(
                                             style: ElevatedButton.styleFrom(
                                                 backgroundColor: isTrackingThis
-                                                    ? Colors.blueAccent
-                                                    : Colors.grey
-                                                        .withOpacity(0.2),
-                                                elevation: 0),
+                                                    ? Colors.redAccent
+                                                    : Colors.blueAccent,
+                                                elevation: 0,
+                                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
                                             onPressed: () async {
-                                              setState(() {
-                                                selectedTrackedBusId =
-                                                    bus['id'];
-                                                adminStreetRoute = [];
-                                              });
-                                              if (bus['location'] != null) {
-                                                mapController.move(
-                                                    bus['location'], 14.0);
+                                              if (isTrackingThis) {
+                                                // 🌟 إذا كانت متابعة، قم بإلغاء المتابعة والعودة لوضع (عرض الكل)
+                                                setState(() {
+                                                  selectedTrackedBusId = null;
+                                                  adminStreetRoute = [];
+                                                });
+                                                mapController.move(schoolLocation, 13.0);
+                                              } else {
+                                                // 🌟 إذا لم تكن متابعة، ابدأ المتابعة وارسم المسار
+                                                setState(() {
+                                                  selectedTrackedBusId = currentBusId;
+                                                  adminStreetRoute = [];
+                                                });
+                                                if (bus['location'] != null && bus['location'] is LatLng) {
+                                                  mapController.move(bus['location'], 14.0);
 
-                                                List<LatLng> waypoints = [
-                                                  bus['location']
-                                                ];
-                                                final bStudents = globalStudents
-                                                    .where((s) =>
-                                                        s['busId'] == bus['id'])
-                                                    .toList();
-                                                bStudents.sort((a, b) =>
-                                                    (a['stopNumber'] ?? 99)
-                                                        .compareTo(
-                                                            b['stopNumber'] ??
-                                                                99));
+                                                  List<LatLng> waypoints = [bus['location']];
+                                                  final bStudents = globalStudents
+                                                      .where((s) => s['busId'].toString() == currentBusId)
+                                                      .toList();
+                                                  bStudents.sort((a, b) => (a['stopNumber'] ?? 99).compareTo(b['stopNumber'] ?? 99));
 
-                                                for (var st in bStudents) {
-                                                  if (st['home'] != null &&
-                                                      st['status'] !=
-                                                          'boarded' &&
-                                                      st['status'] !=
-                                                          'absent') {
-                                                    waypoints.add(st['home']);
+                                                  for (var st in bStudents) {
+                                                    if (st['home'] != null &&
+                                                        st['home'] is LatLng &&
+                                                        st['status'] != 'boarded' &&
+                                                        st['status'] != 'absent') {
+                                                      waypoints.add(st['home']);
+                                                    }
                                                   }
-                                                }
-                                                waypoints.add(schoolLocation);
+                                                  waypoints.add(schoolLocation);
 
-                                                final route =
-                                                    await getMultiPointRoute(
-                                                        waypoints);
-                                                if (mounted &&
-                                                    selectedTrackedBusId ==
-                                                        bus['id']) {
-                                                  setState(() =>
-                                                      adminStreetRoute = route);
+                                                  final route = await getMultiPointRoute(waypoints);
+                                                  if (mounted && selectedTrackedBusId == currentBusId) {
+                                                    setState(() => adminStreetRoute = route);
+                                                  }
                                                 }
                                               }
                                             },
-                                            child: Text('متابعة 📍',
-                                                style: TextStyle(
-                                                    color: isTrackingThis
-                                                        ? Colors.white
-                                                        : Colors.grey,
+                                            child: Text(
+                                                isTrackingThis ? 'إلغاء ✖' : 'متابعة 📍',
+                                                style: const TextStyle(
+                                                    color: Colors.white,
                                                     fontSize: 12)))
                                       ]));
                             }))
                   ])))
     ]);
   }
-
+  
   Widget _buildStudentsDatabaseView() {
     final unassignedStudents = globalStudents
         .where((s) => s['busId'] == null || s['busId'] == '')
@@ -2546,8 +2700,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       fontSize: 16,
                       fontWeight: FontWeight.bold))),
           ...globalBuses.map((bus) {
+            final String currentBusId = (bus['id'] ?? bus['_id']).toString();
             final busStudents =
-                globalStudents.where((s) => s['busId'] == bus['id']).toList();
+                globalStudents.where((s) => s['busId'].toString() == currentBusId).toList();
             busStudents.sort((a, b) =>
                 (a['stopNumber'] ?? 99).compareTo(b['stopNumber'] ?? 99));
             return Card(
@@ -2566,7 +2721,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                             child: Icon(Icons.directions_bus,
                                 color: Colors.white, size: 20)),
                         title: Text(
-                            'حافلة ${bus['number']} - المشرف: ${bus['driverName']}',
+                            'حافلة ${bus['number'] ?? '-'} - المشرف: ${bus['driverName'] ?? 'بدون'}',
                             style: const TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold)),
@@ -2591,17 +2746,17 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                   leading: CircleAvatar(
                                       radius: 12,
                                       backgroundColor: Colors.redAccent,
-                                      child: Text('${student['stopNumber']}',
+                                      child: Text('${student['stopNumber'] ?? '-'}',
                                           style: const TextStyle(
                                               fontSize: 10,
                                               color: Colors.white))),
-                                  title: Text(student['name'],
+                                  title: Text(student['name']?.toString() ?? 'بدون اسم',
                                       style: const TextStyle(
                                           color: Colors.white,
                                           fontWeight: FontWeight.bold,
                                           fontSize: 14)),
                                   subtitle: Text(
-                                      'المقعد: ${student['seat']} | الهاتف: ${student['parentPhone']}',
+                                      'المقعد: ${student['seat'] ?? '-'} | الهاتف: ${student['parentPhone'] ?? '-'}',
                                       style: const TextStyle(color: Colors.grey, fontSize: 11)),
                                   trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                                     IconButton(
@@ -2615,12 +2770,14 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                             color: Colors.red, size: 18),
                                         onPressed: () async {
                                           try {
+                                            final String stId = (student['id'] ?? student['_id']).toString();
                                             final response = await http.delete(
                                                 Uri.parse(
-                                                    '$serverUrl/api/students/${student['id']}'));
-                                            if (response.statusCode == 200)
+                                                    '$serverUrl/api/students/$stId'));
+                                            if (response.statusCode == 200) {
                                               setState(() => globalStudents
                                                   .removeAt(originalIndex));
+                                            }
                                           } catch (e) {
                                             print('خطأ الحذف: $e');
                                           }
@@ -2664,7 +2821,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                               child: ListTile(
                                   leading: const Icon(Icons.person,
                                       color: Colors.grey),
-                                  title: Text(student['name'],
+                                  title: Text(student['name']?.toString() ?? 'بدون اسم',
                                       style: const TextStyle(
                                           color: Colors.white,
                                           fontWeight: FontWeight.bold)),
@@ -2682,12 +2839,14 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                                 color: Colors.red, size: 18),
                                             onPressed: () async {
                                               try {
-                                                final response =
-                                                    await http.delete(Uri.parse(
-                                                        '$serverUrl/api/students/${student['id']}'));
-                                                if (response.statusCode == 200)
+                                                final String stId = (student['id'] ?? student['_id']).toString();
+                                                final response = await http.delete(
+                                                    Uri.parse(
+                                                        '$serverUrl/api/students/$stId'));
+                                                if (response.statusCode == 200) {
                                                   setState(() => globalStudents
                                                       .removeAt(originalIndex));
+                                                }
                                               } catch (e) {
                                                 print('خطأ الحذف: $e');
                                               }
@@ -2715,7 +2874,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       leading: const CircleAvatar(
                           backgroundColor: Colors.blueAccent,
                           child: Icon(Icons.person, color: Colors.white)),
-                      title: Text(bus['driverName'],
+                      title: Text(bus['driverName'] ?? 'بدون اسم',
                           style: const TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.bold,
@@ -2725,10 +2884,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
                           children: [
                             const SizedBox(height: 8),
                             Text(
-                                'حافلة: ${bus['number']} (${bus['routeName']})',
+                                'حافلة: ${bus['number'] ?? '-'} (${bus['routeName'] ?? '-'})',
                                 style: const TextStyle(color: Colors.grey)),
                             const SizedBox(height: 5),
-                            Text('الهاتف: ${bus['driverPhone']}',
+                            Text('الهاتف: ${bus['driverPhone'] ?? '-'}',
                                 style: const TextStyle(
                                     color: Colors.greenAccent,
                                     fontWeight: FontWeight.bold))
@@ -2742,12 +2901,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
                             icon: const Icon(Icons.delete, color: Colors.red),
                             onPressed: () async {
                               try {
+                                final String busId = (bus['id'] ?? bus['_id']).toString();
                                 final response = await http.delete(Uri.parse(
-                                    '$serverUrl/api/buses/${bus['id']}'));
+                                    '$serverUrl/api/buses/$busId'));
                                 if (response.statusCode == 200) {
                                   setState(() {
                                     for (var s in globalStudents.where(
-                                        (s) => s['busId'] == bus['id'])) {
+                                        (s) => s['busId'].toString() == busId)) {
                                       s['busId'] = '';
                                     }
                                     globalBuses.removeAt(index);
@@ -2761,7 +2921,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
             }));
   }
 
-// 🌟 الشاشة الجديدة لعرض التقارير (سجل الرحلات والغياب)
   Widget _buildReportsView() {
     final absentStudents =
         globalStudents.where((s) => (s['absenceCount'] ?? 0) > 0).toList();
@@ -2795,7 +2954,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         itemBuilder: (ctx, i) {
                           final log = tripLogs[i];
                           final bus = globalBuses.firstWhere(
-                              (b) => b['id'] == log['busId'],
+                              (b) => (b['id'] ?? b['_id']).toString() == log['busId'].toString(),
                               orElse: () => {'number': '؟'});
 
                           DateTime start =
@@ -2818,7 +2977,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                   backgroundColor: Colors.blueAccent,
                                   child: Icon(Icons.directions_bus,
                                       color: Colors.white)),
-                              title: Text('حافلة ${bus['number']}',
+                              title: Text('حافلة ${bus['number'] ?? '-'}',
                                   style: const TextStyle(
                                       color: Colors.white,
                                       fontWeight: FontWeight.bold)),
@@ -2838,24 +2997,38 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                         : Colors.orangeAccent,
                                   ),
                                   IconButton(
-                                    icon: const Icon(Icons.delete, color: Colors.redAccent),
+                                    icon: const Icon(Icons.delete,
+                                        color: Colors.redAccent),
                                     onPressed: () async {
-                                      // إضافة نافذة تأكيد قبل الحذف كإجراء احترافي
                                       bool? confirm = await showDialog(
                                         context: context,
                                         builder: (ctx) => AlertDialog(
-                                          backgroundColor: const Color(0xFF1E293B),
-                                          title: const Text('تأكيد الحذف', style: TextStyle(color: Colors.white)),
-                                          content: const Text('هل أنت متأكد من رغبتك في حذف سجل هذه الرحلة؟', style: TextStyle(color: Colors.grey)),
+                                          backgroundColor:
+                                              const Color(0xFF1E293B),
+                                          title: const Text('تأكيد الحذف',
+                                              style: TextStyle(
+                                                  color: Colors.white)),
+                                          content: const Text(
+                                              'هل أنت متأكد من رغبتك في حذف سجل هذه الرحلة؟',
+                                              style: TextStyle(
+                                                  color: Colors.grey)),
                                           actions: [
                                             TextButton(
-                                              onPressed: () => Navigator.pop(ctx, false),
-                                              child: const Text('إلغاء', style: TextStyle(color: Colors.grey)),
+                                              onPressed: () =>
+                                                  Navigator.pop(ctx, false),
+                                              child: const Text('إلغاء',
+                                                  style: TextStyle(
+                                                      color: Colors.grey)),
                                             ),
                                             ElevatedButton(
-                                              style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-                                              onPressed: () => Navigator.pop(ctx, true),
-                                              child: const Text('حذف', style: TextStyle(color: Colors.white)),
+                                              style: ElevatedButton.styleFrom(
+                                                  backgroundColor:
+                                                      Colors.redAccent),
+                                              onPressed: () =>
+                                                  Navigator.pop(ctx, true),
+                                              child: const Text('حذف',
+                                                  style: TextStyle(
+                                                      color: Colors.white)),
                                             ),
                                           ],
                                         ),
@@ -2863,15 +3036,19 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
                                       if (confirm == true) {
                                         try {
+                                          final String logId = (log['id'] ?? log['_id']).toString();
                                           final response = await http.delete(
-                                              Uri.parse('$serverUrl/api/trip-logs/${log['_id']}'));
+                                              Uri.parse(
+                                                  '$serverUrl/api/trip-logs/$logId'));
                                           if (response.statusCode == 200) {
                                             setState(() {
                                               tripLogs.removeAt(i);
                                             });
-                                            ScaffoldMessenger.of(context).showSnackBar(
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
                                               const SnackBar(
-                                                content: Text('تم حذف الرحلة بنجاح'),
+                                                content: Text(
+                                                    'تم حذف الرحلة بنجاح'),
                                                 backgroundColor: Colors.green,
                                               ),
                                             );
@@ -2906,12 +3083,12 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                   backgroundColor: Colors.redAccent,
                                   child: Icon(Icons.person_off,
                                       color: Colors.white)),
-                              title: Text(student['name'],
+                              title: Text(student['name']?.toString() ?? 'بدون اسم',
                                   style: const TextStyle(
                                       color: Colors.white,
                                       fontWeight: FontWeight.bold)),
                               subtitle: Text(
-                                  'رقم الولي: ${student['parentPhone']}',
+                                  'رقم الولي: ${student['parentPhone'] ?? '-'}',
                                   style: const TextStyle(
                                       color: Colors.grey, fontSize: 12)),
                               trailing: Container(
@@ -2920,7 +3097,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                     color: Colors.redAccent.withOpacity(0.2),
                                     borderRadius: BorderRadius.circular(10)),
                                 child: Text(
-                                    'غاب ${student['absenceCount']} مرات',
+                                    'غاب ${student['absenceCount'] ?? 0} مرات',
                                     style: const TextStyle(
                                         color: Colors.redAccent,
                                         fontWeight: FontWeight.bold)),
@@ -2937,6 +3114,42 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
+// 🌟 دالة تغيير كلمة مرور الإدارة
+  void _changeAdminPassword() {
+    String newPass = '';
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        title: const Text('تغيير كلمة مرور الإدارة', style: TextStyle(color: Colors.white)),
+        content: TextField(
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+              labelText: 'كلمة المرور الجديدة', labelStyle: TextStyle(color: Colors.blueAccent)),
+          onChanged: (val) => newPass = val,
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('إلغاء', style: TextStyle(color: Colors.grey))),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            onPressed: () async {
+              if (newPass.isNotEmpty) {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setString('admin_password', newPass); // حفظ الكلمة في الهاتف
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('تم تغيير كلمة مرور الإدارة بنجاح!'), backgroundColor: Colors.green));
+              }
+            },
+            child: const Text('حفظ', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+  
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -2946,22 +3159,29 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 icon: const Icon(Icons.logout, color: Colors.white),
                 onPressed: () async {
                   final prefs = await SharedPreferences.getInstance();
-                  await prefs.clear(); // هذا الأمر سيمسح الذاكرة ويخرجك نهائياً
+                  await prefs.clear();
                   Navigator.pushReplacement(context,
                       MaterialPageRoute(builder: (_) => const LoginScreen()));
                 }),
             title: const Text('لوحة الإدارة المركزية',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)), // 🌟 هنا قوسين فقط بدلاً من 3
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.vpn_key, color: Colors.orangeAccent),
+                tooltip: 'تغيير كلمة المرور',
+                onPressed: _changeAdminPassword,
+              )
+            ],
+        ), // 🌟 هنا يُغلق الـ AppBar بشكل صحيح
         body: IndexedStack(index: _currentIndex, children: [
           _buildMapAndTrackingView(),
           _buildStudentsDatabaseView(),
           _buildDriversDatabaseView(),
-          _buildReportsView() // 🌟 إضافة شاشة التقارير هنا
+          _buildReportsView()
         ]),
         bottomNavigationBar: BottomNavigationBar(
             backgroundColor: const Color(0xFF1E293B),
-            type: BottomNavigationBarType
-                .fixed, // 🌟 ضروري ليظهر الشريط بشكل صحيح عند إضافة زر رابع
+            type: BottomNavigationBarType.fixed,
             selectedItemColor: Colors.blueAccent,
             unselectedItemColor: Colors.grey,
             currentIndex: _currentIndex,
@@ -2973,8 +3193,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
               BottomNavigationBarItem(
                   icon: Icon(Icons.drive_eta), label: 'المشرفون'),
               BottomNavigationBarItem(
-                  icon: Icon(Icons.analytics),
-                  label: 'التقارير') // 🌟 الزر الجديد
+                  icon: Icon(Icons.analytics), label: 'التقارير')
             ]));
   }
 }

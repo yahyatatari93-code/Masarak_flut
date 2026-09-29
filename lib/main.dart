@@ -479,7 +479,7 @@ class _LoginScreenState extends State<LoginScreen> {
            String? fcmToken = await FirebaseMessaging.instance.getToken();
            if (fcmToken != null) {
              await http.post(
-               Uri.parse('http://169.58.150.76:3000/api/update-fcm-token'),
+               Uri.parse('$serverUrl/api/update-fcm-token'),
                headers: {'Content-Type': 'application/json'},
                body: jsonEncode({
                  'studentId': studentId,
@@ -678,14 +678,26 @@ class _DriverDashboardState extends State<DriverDashboard> {
   Timer? _routeTimer;
 
   @override
-  void initState() {
-    super.initState();
-    _initSocket();
-    _requestPermissionsAndLocate();
+    void initState() {
+      super.initState();
+      _initSocket();
+      _requestPermissionsAndLocate();
 
-    int currentHour = DateTime.now().hour;
-    isMorningTrip = currentHour < 12;
-  }
+      int currentHour = DateTime.now().hour;
+      isMorningTrip = currentHour < 12;
+
+      // 🌟 استرجاع حالة الرحلة إذا كان التطبيق قد أغلق
+      _checkSavedTrackingState();
+    }
+
+    // 🌟 دالة جديدة لقراءة الحالة المحفوظة
+    void _checkSavedTrackingState() async {
+      final prefs = await SharedPreferences.getInstance();
+      bool savedIsTracking = prefs.getBool('isTracking_${widget.busId}') ?? false;
+      if (savedIsTracking) {
+        _toggleTracking(isRestoring: true);
+      }
+    }
 
   Future<void> _requestPermissionsAndLocate() async {
     if (kIsWeb) return;
@@ -757,94 +769,104 @@ class _DriverDashboardState extends State<DriverDashboard> {
     if (mounted) setState(() => streetRoute = route);
   }
 
-  void _toggleTracking() async {
-    if (isTracking) {
-      positionStream?.cancel();
-      _routeTimer?.cancel();
-      setState(() {
-        isTracking = false;
-        streetRoute = [];
-      });
-      _sendNotification(
-          'trip_ended',
-          isMorningTrip ? 'وصلت الحافلة بسلام.' : 'تم إنهاء رحلة العودة بنجاح.',
-          null);
-    } else {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('الرجاء تفعيل موقع الهاتف (GPS) أولاً!'),
-            backgroundColor: Colors.red));
-        return;
-      }
+  // 🌟 تحديث دالة بدء وإيقاف التتبع لحفظ الحالة
+    void _toggleTracking({bool isRestoring = false}) async {
+      final prefs = await SharedPreferences.getInstance();
 
-      setState(() => isTracking = true);
-      _sendNotification('trip_started', 'انطلقت الحافلة.', null);
-
-      try {
-        Position initialPosition = await Geolocator.getCurrentPosition(
-            desiredAccuracy: LocationAccuracy.bestForNavigation);
+      if (isTracking && !isRestoring) {
+        positionStream?.cancel();
+        _routeTimer?.cancel();
         setState(() {
-          currentPos =
-              LatLng(initialPosition.latitude, initialPosition.longitude);
+          isTracking = false;
+          streetRoute = [];
         });
-        mapController.move(currentPos, 15.0);
-
-        if (isConnected) {
-          socket.emit('updateLocation', {
-            'busId': widget.busId,
-            'lat': currentPos.latitude,
-            'lng': currentPos.longitude
-          });
-        }
-      } catch (e) {
-        print("خطأ تحديد الموقع المبدئي: $e");
-      }
-
-      for (var s in globalStudents) {
-        s['alertSent'] = false;
-        s['status'] = 'waiting';
-      }
-
-      _updateDriverRoute();
-      _routeTimer = Timer.periodic(
-          const Duration(seconds: 15), (_) => _updateDriverRoute());
-
-      positionStream = Geolocator.getPositionStream(
-              locationSettings: const LocationSettings(
-                  accuracy: LocationAccuracy.bestForNavigation,
-                  distanceFilter: 5))
-          .listen((Position position) {
-        setState(() {
-          currentSpeed = (position.speed * 3.6);
-          currentPos = LatLng(position.latitude, position.longitude);
-          mapController.move(currentPos, 15.0);
-        });
-
-        if (isConnected) {
-          socket.emit('updateLocation', {
-            'busId': widget.busId,
-            'lat': position.latitude,
-            'lng': position.longitude
-          });
+        // مسح حالة التتبع عند إنهاء الرحلة
+        await prefs.setBool('isTracking_${widget.busId}', false);
+        _sendNotification(
+            'trip_ended',
+            isMorningTrip ? 'وصلت الحافلة بسلام.' : 'تم إنهاء رحلة العودة بنجاح.',
+            null);
+      } else {
+        bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+        if (!serviceEnabled) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('الرجاء تفعيل موقع الهاتف (GPS) أولاً!'),
+              backgroundColor: Colors.red));
+          return;
         }
 
-        final busStudents =
-            globalStudents.where((s) => s['busId'] == widget.busId).toList();
-        for (var student in busStudents) {
-          if (student['home'] != null &&
-              student['status'] == 'waiting' &&
-              student['alertSent'] != true) {
-            if (calculateDistance(currentPos, student['home']) < 300) {
-              student['alertSent'] = true;
-              _sendNotification('approaching',
-                  'الحافلة تقترب! المسافة أقل من 300 متر.', student['id']);
-            }
+        setState(() => isTracking = true);
+        // حفظ حالة التتبع في ذاكرة الهاتف
+        await prefs.setBool('isTracking_${widget.busId}', true);
+
+        // إذا لم يكن استرجاعاً (أي ضغطة جديدة من السائق)، نرسل إشعار البدء ونصفر الحالات
+        if (!isRestoring) {
+          _sendNotification('trip_started', 'انطلقت الحافلة.', null);
+          for (var s in globalStudents) {
+            s['alertSent'] = false;
+            s['status'] = 'waiting';
           }
         }
-      });
+
+        try {
+          Position initialPosition = await Geolocator.getCurrentPosition(
+              desiredAccuracy: LocationAccuracy.bestForNavigation);
+          setState(() {
+            currentPos =
+                LatLng(initialPosition.latitude, initialPosition.longitude);
+          });
+          mapController.move(currentPos, 15.0);
+
+          if (isConnected) {
+            socket.emit('updateLocation', {
+              'busId': widget.busId,
+              'lat': currentPos.latitude,
+              'lng': currentPos.longitude
+            });
+          }
+        } catch (e) {
+          print("خطأ تحديد الموقع المبدئي: $e");
+        }
+
+        _updateDriverRoute();
+        _routeTimer = Timer.periodic(
+            const Duration(seconds: 15), (_) => _updateDriverRoute());
+
+        positionStream = Geolocator.getPositionStream(
+                locationSettings: const LocationSettings(
+                    accuracy: LocationAccuracy.bestForNavigation,
+                    distanceFilter: 5))
+            .listen((Position position) {
+          setState(() {
+            currentSpeed = (position.speed * 3.6);
+            currentPos = LatLng(position.latitude, position.longitude);
+            mapController.move(currentPos, 15.0);
+          });
+
+          if (isConnected) {
+            socket.emit('updateLocation', {
+              'busId': widget.busId,
+              'lat': position.latitude,
+              'lng': position.longitude
+            });
+          }
+
+          final busStudents =
+              globalStudents.where((s) => s['busId'] == widget.busId).toList();
+          for (var student in busStudents) {
+            if (student['home'] != null &&
+                student['status'] == 'waiting' &&
+                student['alertSent'] != true) {
+              if (calculateDistance(currentPos, student['home']) < 300) {
+                student['alertSent'] = true;
+                _sendNotification('approaching',
+                    'الحافلة تقترب! المسافة أقل من 300 متر.', student['id']);
+              }
+            }
+          }
+        });
+      }
     }
-  }
 
   @override
   void dispose() {

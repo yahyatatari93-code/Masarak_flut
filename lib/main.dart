@@ -81,57 +81,72 @@ Future<bool> onIosBackground(ServiceInstance service) async {
 }
 
 // ==========================================
-// 2. عقل الجاسوس الصامت (ماذا يفعل وهو مغلق؟)
+// 2. عقل الجاسوس الصامت (محدث بأقصى طاقة للبقاء حياً)
 // ==========================================
 @pragma('vm:entry-point')
 void onStartBackground(ServiceInstance service) async {
   DartPluginRegistrant.ensureInitialized();
   WidgetsFlutterBinding.ensureInitialized(); 
 
-  // تهيئة الإشعارات داخل الخدمة الخلفية لضمان عملها
+  // 1. تهيئة الإشعارات وإنشاء القناة إجبارياً في الخلفية (السبب الرئيسي لعدم ظهور الإشعار)
   const AndroidInitializationSettings initializationSettingsAndroid =
       AndroidInitializationSettings('ic_launcher');
   const InitializationSettings initializationSettings =
       InitializationSettings(android: initializationSettingsAndroid);
   await flutterLocalNotificationsPlugin.initialize(initializationSettings);
 
-  // 🌟 الاتصال بالسيرفر فوراً وبدون شروط (خارج الـ if)
+  final AndroidFlutterLocalNotificationsPlugin? androidImplementation =
+      flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+  
+  await androidImplementation?.createNotificationChannel(
+    const AndroidNotificationChannel(
+      'masarak_urgent_channel_v3', 
+      'إشعارات مسارك العاجلة',
+      description: 'تنبيهات وصول الحافلة وصعود الطلاب',
+      importance: Importance.max,
+      playSound: true,
+      enableVibration: true,
+    ),
+  );
+
+  // 2. الاتصال بالسيرفر مع أوامر "القتال من أجل البقاء" (Reconnection)
   IO.Socket backgroundSocket = IO.io('https://masarak-aleppo.duckdns.org', <String, dynamic>{
     'transports': ['websocket'],
-    'autoConnect': true
+    'autoConnect': true,
+    'reconnection': true, // إجبار السوكيت على إعادة الاتصال لو قتله النظام
+    'reconnectionDelay': 1000,
+    'reconnectionDelayMax': 5000,
+    'reconnectionAttempts': 99999, // المحاولة للأبد
   });
 
-  backgroundSocket.connect(); // إجبار الاتصال
+  backgroundSocket.connect();
 
-  // الاستماع الدائم للأحداث في الخلفية
+  // إجبار السوكيت على البقاء حياً عند انقطاع الإنترنت أو إغلاق التطبيق
+  backgroundSocket.onDisconnect((_) {
+    backgroundSocket.connect(); // أعد الاتصال فوراً
+  });
+
+  // 3. استقبال الإشعارات
   backgroundSocket.on('busNotification', (data) async {
-    // 🌟 جلب بيانات الدخول "الطازجة" لحظة وصول الإشعار
     final prefs = await SharedPreferences.getInstance();
-    await prefs.reload(); // أمر حاسم: يمنع الخدمة من قراءة بيانات قديمة
+    await prefs.reload(); // تحديث الذاكرة فوراً لعدم قراءة بيانات قديمة
     
     String? role = prefs.getString('role');
     String? studentId = prefs.getString('studentId');
 
-    // التحقق الآن: هل المستخدم الحالي ولي أمر؟ وهل الإشعار يخصه؟
     if (role == 'parent' && (data['studentId'] == null || data['studentId'] == studentId)) {
       String type = data['type'];
       String msg = data['msg'];
       String title = 'تحديث من الحافلة';
 
-      if (type == 'approaching')
-        title = '⚠️ الحافلة تقترب!';
-      else if (type == 'emergency')
-        title = '🚨 حالة طوارئ/تأخير!';
-      else if (type == 'student_boarded')
-        title = '✅ تأكيد صعود';
-      else if (type == 'student_dropped_off')
-        title = '🏠 تأكيد نزول';
-      else if (type == 'student_absent')
-        title = '❌ غياب الطالب';
-      else if (type == 'trip_started')
-        title = '🚀 انطلاق الرحلة';
-      else if (type == 'trip_ended') 
-        title = '🏁 نهاية الرحلة';
+      if (type == 'approaching') title = '⚠️ الحافلة تقترب!';
+      else if (type == 'emergency') title = '🚨 حالة طوارئ/تأخير!';
+      else if (type == 'student_boarded') title = '✅ تأكيد صعود';
+      else if (type == 'student_dropped_off') title = '🏠 تأكيد نزول';
+      else if (type == 'student_absent') title = '❌ غياب الطالب';
+      else if (type == 'trip_started') title = '🚀 انطلاق الرحلة';
+      else if (type == 'trip_ended') title = '🏁 نهاية الرحلة';
 
       await showLoudNotification(title, msg);
     }

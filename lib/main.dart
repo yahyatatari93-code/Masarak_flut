@@ -1064,7 +1064,6 @@ void _changeDriverPassword() {
                               if (!isTracking) {
                                 _toggleTracking();
                               } else if (canEndTrip) {
-                                // 🌟 الميزة 2: التسليم الجماعي عند الضغط على إنهاء الرحلة (الذهاب)
                                 if (isMorningTrip) {
                                   for (var st in busStudents) {
                                     if (st['status'] == 'boarded') {
@@ -1086,13 +1085,44 @@ void _changeDriverPassword() {
                                 ));
                               }
                             },
+                            // 🌟 الميزة الجديدة: الضغط المطول لإلغاء رحلة بالخطأ
+                            onLongPress: () {
+                              if (isTracking) {
+                                showDialog(
+                                  context: context,
+                                  builder: (ctx) => AlertDialog(
+                                    backgroundColor: const Color(0xFF1E293B),
+                                    title: const Text('إلغاء الرحلة؟', style: TextStyle(color: Colors.white)),
+                                    content: const Text('هل قمت ببدء الرحلة عن طريق الخطأ وتريد إيقاف التتبع فوراً؟', style: TextStyle(color: Colors.grey)),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(ctx),
+                                        child: const Text('تراجع', style: TextStyle(color: Colors.grey)),
+                                      ),
+                                      ElevatedButton(
+                                        style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                                        onPressed: () {
+                                          Navigator.pop(ctx);
+                                          _toggleTracking(); // إيقاف التتبع فوراً متجاوزاً الشروط
+                                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                                            content: Text('✅ تم إلغاء الرحلة وإيقاف التتبع.'),
+                                            backgroundColor: Colors.green,
+                                          ));
+                                        },
+                                        child: const Text('نعم، إيقاف فوري', style: TextStyle(color: Colors.white)),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }
+                            },
                             child: Container(
                                 height: 55,
                                 decoration: BoxDecoration(
                                     color: !isTracking
                                         ? Colors.blueAccent
                                         : (canEndTrip
-                                            ? Colors.green // لون أخضر لزر الإنهاء والتسليم
+                                            ? Colors.green 
                                             : Colors.grey.shade700),
                                     borderRadius: BorderRadius.circular(15)),
                                 child: Center(
@@ -1101,14 +1131,13 @@ void _changeDriverPassword() {
                                             ? 'بدء الرحلة والتتبع'
                                             : (canEndTrip
                                                 ? (isMorningTrip ? 'تسليم الجميع وإنهاء الرحلة' : 'إنهـاء الرحلـة')
-                                                : 'إنهـاء الرحلـة (مقفل)'),
+                                                : 'إنهـاء الرحلـة (مقفل) - اضغط مطولاً للإلغاء'), // 🌟 تم تحديث النص لتوضيح الميزة للسائق
                                         style: TextStyle(
-                                            fontSize: 16,
+                                            fontSize: 14,
                                             color: !isTracking || canEndTrip
                                                 ? Colors.white
-                                                : Colors.grey.shade400,
+                                                : Colors.white70,
                                             fontWeight: FontWeight.bold))))),
-                      ),
                       if (isTracking) ...[
                         const SizedBox(width: 10),
                         Container(

@@ -19,6 +19,8 @@ dependencies:
   flutter_background_service: any
   shared_preferences: ^2.2.3
   permission_handler: ^11.0.1
+  firebase_core: ^4.15.0
+  firebase_messaging: ^16.7.0
 
 dev_dependencies:
   flutter_lints: ^2.0.0

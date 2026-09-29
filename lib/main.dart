@@ -14,30 +14,46 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'firebase_options.dart';
 
 // المتغير العام لمشغل الإشعارات
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
 
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  print("📩 إشعار فايربيس في الخلفية: ${message.data}");
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // 🌟 تهيئة فايربيس
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+  // 🌟 طلب صلاحيات فايربيس واستخراج الـ Token
+  FirebaseMessaging messaging = FirebaseMessaging.instance;
+  await messaging.requestPermission();
+  String? token = await messaging.getToken();
+  print("🔥 FCM Token: $token");
+
   if (!kIsWeb) {
     try {
-      // 1. تصحيح اسم الأيقونة
       const AndroidInitializationSettings initializationSettingsAndroid =
           AndroidInitializationSettings('ic_launcher');
       const InitializationSettings initializationSettings =
           InitializationSettings(android: initializationSettingsAndroid);
       await flutterLocalNotificationsPlugin.initialize(initializationSettings);
 
-      // 2. طلب صلاحية الإشعارات من المستخدم
       await flutterLocalNotificationsPlugin
           .resolvePlatformSpecificImplementation<
               AndroidFlutterLocalNotificationsPlugin>()
           ?.requestNotificationsPermission();
 
-      // 3. تشغيل الخدمة الخلفية
       await initializeBackgroundService();
     } catch (e) {
       print('خطأ في تشغيل الخدمة الخلفية: $e');
@@ -81,57 +97,76 @@ Future<bool> onIosBackground(ServiceInstance service) async {
 }
 
 // ==========================================
-// 2. عقل الجاسوس الصامت (ماذا يفعل وهو مغلق؟)
+// 2. عقل الجاسوس الصامت (محدث بأقصى طاقة للبقاء حياً)
 // ==========================================
 @pragma('vm:entry-point')
 void onStartBackground(ServiceInstance service) async {
   DartPluginRegistrant.ensureInitialized();
-  WidgetsFlutterBinding.ensureInitialized(); // 🌟 سطر جديد مهم
+  WidgetsFlutterBinding.ensureInitialized();
 
-  // 🌟 الكود الجديد: تهيئة الإشعارات داخل الخدمة الخلفية
+  // 1. تهيئة الإشعارات وإنشاء القناة إجبارياً في الخلفية (السبب الرئيسي لعدم ظهور الإشعار)
   const AndroidInitializationSettings initializationSettingsAndroid =
       AndroidInitializationSettings('ic_launcher');
   const InitializationSettings initializationSettings =
       InitializationSettings(android: initializationSettingsAndroid);
   await flutterLocalNotificationsPlugin.initialize(initializationSettings);
 
-  final prefs = await SharedPreferences.getInstance();
-  String? role = prefs.getString('role');
-  String? studentId = prefs.getString('studentId');
+  final AndroidFlutterLocalNotificationsPlugin? androidImplementation =
+      flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
 
-  // ... باقي الكود يبقى كما هو (الاتصال بالسيرفر واستقبال الإشعارات) ...
+  await androidImplementation?.createNotificationChannel(
+    const AndroidNotificationChannel(
+      'masarak_urgent_channel_v3',
+      'إشعارات مسارك العاجلة',
+      description: 'تنبيهات وصول الحافلة وصعود الطلاب',
+      importance: Importance.max,
+      playSound: true,
+      enableVibration: true,
+    ),
+  );
 
-  if (role == 'parent') {
-    IO.Socket backgroundSocket =
-        IO.io('https://masarak-aleppo.duckdns.org', <String, dynamic>{
-      'transports': ['websocket'],
-      'autoConnect': true
-    });
+  // 2. الاتصال بالسيرفر مع أوامر "القتال من أجل البقاء" (Reconnection)
+  IO.Socket backgroundSocket = IO.io('https://masarak-aleppo.duckdns.org', <String, dynamic>{
+    'transports': ['websocket'],
+    'autoConnect': true,
+    'reconnection': true, // إجبار السوكيت على إعادة الاتصال لو قتله النظام
+    'reconnectionDelay': 1000,
+    'reconnectionDelayMax': 5000,
+    'reconnectionAttempts': 99999, // المحاولة للأبد
+  });
 
-    backgroundSocket.on('busNotification', (data) async {
-      if (data['studentId'] == null || data['studentId'] == studentId) {
-        String type = data['type'];
-        String msg = data['msg'];
-        String title = 'تحديث من الحافلة';
+  backgroundSocket.connect();
 
-        if (type == 'approaching')
-          title = '⚠️ الحافلة تقترب!';
-        else if (type == 'emergency') // 🌟 السطر الجديد
-          title = '🚨 حالة طوارئ/تأخير!'; // 🌟 السطر الجديد
-        else if (type == 'student_boarded')
-          title = '✅ تأكيد صعود';
-        else if (type == 'student_dropped_off') // <--- السطر الجديد
-          title = '🏠 تأكيد نزول'; // <--- السطر الجديد
-        else if (type == 'student_absent')
-          title = '❌ غياب الطالب';
-        else if (type == 'trip_started')
-          title = '🚀 انطلاق الرحلة';
-        else if (type == 'trip_ended') title = '🏁 نهاية الرحلة';
+  // إجبار السوكيت على البقاء حياً عند انقطاع الإنترنت أو إغلاق التطبيق
+  backgroundSocket.onDisconnect((_) {
+    backgroundSocket.connect(); // أعد الاتصال فوراً
+  });
 
-        await showLoudNotification(title, msg);
-      }
-    });
-  }
+  // 3. استقبال الإشعارات
+  backgroundSocket.on('busNotification', (data) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload(); // تحديث الذاكرة فوراً لعدم قراءة بيانات قديمة
+
+    String? role = prefs.getString('role');
+    String? studentId = prefs.getString('studentId');
+
+    if (role == 'parent' && (data['studentId'] == null || data['studentId'] == studentId)) {
+      String type = data['type'];
+      String msg = data['msg'];
+      String title = 'تحديث من الحافلة';
+
+      if (type == 'approaching') title = '⚠️ الحافلة تقترب!';
+      else if (type == 'emergency') title = '🚨 حالة طوارئ/تأخير!';
+      else if (type == 'student_boarded') title = '✅ تأكيد صعود';
+      else if (type == 'student_dropped_off') title = '🏠 تأكيد نزول';
+      else if (type == 'student_absent') title = '❌ غياب الطالب';
+      else if (type == 'trip_started') title = '🚀 انطلاق الرحلة';
+      else if (type == 'trip_ended') title = '🏁 نهاية الرحلة';
+
+      await showLoudNotification(title, msg);
+    }
+  });
 }
 
 // ==========================================
@@ -403,7 +438,7 @@ class _LoginScreenState extends State<LoginScreen> {
     var foundBus = globalBuses.firstWhere((b) => b['driverName'] == enteredName,
         orElse: () => {});
     String driverPass = foundBus['password']?.toString() ?? '1234';
-    
+
     if (foundBus.isNotEmpty && enteredPass == driverPass) {
       await prefs.setString('role', 'driver');
       await prefs.setString('busId', (foundBus['id'] ?? foundBus['_id']).toString());
@@ -611,8 +646,8 @@ class _DriverDashboardState extends State<DriverDashboard> {
   bool isTracking = false;
   bool isMorningTrip = true;
   // 🌟 الميزة 3: متغير للتحكم بحجم الخريطة (مغلقة افتراضياً لتوفير المساحة)
-  bool isMapExpanded = false; 
-  
+  bool isMapExpanded = false;
+
   double currentSpeed = 0.0;
   LatLng currentPos = const LatLng(36.2150, 37.1450);
   StreamSubscription<Position>? positionStream;
@@ -677,7 +712,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
   void _sendNotification(String type, String msg, String? studentId) {
     if (isConnected) {
       socket.emit('busEvent', {
-        'busId': widget.busId, 
+        'busId': widget.busId,
         'type': type,
         'studentId': studentId,
         'msg': msg
@@ -885,18 +920,22 @@ void _changeDriverPassword() {
                 (s) => s['status'] == 'boarded' || s['status'] == 'absent');
       }
     }
-    
+
     return Scaffold(
       appBar: AppBar(
           backgroundColor: const Color(0xFF1E293B),
           leading: IconButton(
               icon: const Icon(Icons.logout, color: Colors.white),
               onPressed: () async {
-                final prefs = await SharedPreferences.getInstance();
-                await prefs.clear(); 
-                Navigator.pushReplacement(context,
-                    MaterialPageRoute(builder: (_) => const LoginScreen()));
-              }),
+  final prefs = await SharedPreferences.getInstance();
+  // ✅ نحذف فقط بيانات الدخول المؤقتة ونحتفظ بكلمة مرور الإدارة
+  await prefs.remove('role');
+  await prefs.remove('studentId');
+  await prefs.remove('busId');
+
+  Navigator.pushReplacement(context,
+      MaterialPageRoute(builder: (_) => const LoginScreen()));
+}),
           title: Text(
               'المشرف ${globalBuses.firstWhere((b) => (b['id'] ?? b['_id']).toString() == widget.busId, orElse: () => {
                     'driverName': ''
@@ -960,7 +999,7 @@ void _changeDriverPassword() {
                     mini: true,
                     backgroundColor: const Color(0xFF1E293B).withOpacity(0.9),
                     child: Icon(
-                      isMapExpanded ? Icons.fullscreen_exit : Icons.fullscreen, 
+                      isMapExpanded ? Icons.fullscreen_exit : Icons.fullscreen,
                       color: Colors.blueAccent
                     ),
                     onPressed: () => setState(() => isMapExpanded = !isMapExpanded),
@@ -981,7 +1020,7 @@ void _changeDriverPassword() {
                         child: GestureDetector(
                             onTap: () {
                               if (!isTracking) {
-                                _toggleTracking(); 
+                                _toggleTracking();
                               } else if (canEndTrip) {
                                 // 🌟 الميزة 2: التسليم الجماعي عند الضغط على إنهاء الرحلة (الذهاب)
                                 if (isMorningTrip) {
@@ -994,7 +1033,7 @@ void _changeDriverPassword() {
                                     }
                                   }
                                 }
-                                _toggleTracking(); 
+                                _toggleTracking();
                               } else {
                                 ScaffoldMessenger.of(context)
                                     .showSnackBar(SnackBar(
@@ -1125,7 +1164,7 @@ void _changeDriverPassword() {
                                             }
                                           },
                                         ),
-                                        
+
                                       st['home'] == null
                                           ? ElevatedButton.icon(
                                               style: ElevatedButton.styleFrom(
@@ -1160,9 +1199,9 @@ void _changeDriverPassword() {
                                                   if (response.statusCode == 200) {
                                                     setState(() {
                                                       st['home'] = LatLng(currentPos.latitude, currentPos.longitude);
-                                                      st['stopNumber'] = newStopNumber; 
+                                                      st['stopNumber'] = newStopNumber;
                                                     });
-                                                    _updateDriverRoute(); 
+                                                    _updateDriverRoute();
                                                     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                                                       content: Text('📍 تم حفظ موقف ${st['name']} بنجاح!'),
                                                       backgroundColor: Colors.green,
@@ -1504,11 +1543,15 @@ class _ParentDashboardState extends State<ParentDashboard> {
           leading: IconButton(
               icon: const Icon(Icons.logout, color: Colors.white),
               onPressed: () async {
-                final prefs = await SharedPreferences.getInstance();
-                await prefs.clear(); 
-                Navigator.pushReplacement(context,
-                    MaterialPageRoute(builder: (_) => const LoginScreen()));
-              }),
+  final prefs = await SharedPreferences.getInstance();
+  // ✅ نحذف فقط بيانات الدخول المؤقتة ونحتفظ بكلمة مرور الإدارة
+  await prefs.remove('role');
+  await prefs.remove('studentId');
+  await prefs.remove('busId');
+
+  Navigator.pushReplacement(context,
+      MaterialPageRoute(builder: (_) => const LoginScreen()));
+}),
           title: Text('ولي أمر: ${widget.studentData['name']}',
               style: const TextStyle(fontSize: 14)),
           // 🌟 قائمة الأزرار مجمعة هنا
@@ -1801,13 +1844,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
   late IO.Socket socket;
   String? selectedTrackedBusId;
   List<LatLng> adminStreetRoute = [];
-  List<dynamic> tripLogs = []; 
+  List<dynamic> tripLogs = [];
 
   @override
   void initState() {
     super.initState();
     _initAdminSocket();
-    _fetchTripLogs(); 
+    _fetchTripLogs();
   }
 
   Future<void> _fetchTripLogs() async {
@@ -1834,7 +1877,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     socket.on('locationUpdated', (data) {
       if (mounted) {
         setState(() {
-          var busIndex = globalBuses.indexWhere((b) => 
+          var busIndex = globalBuses.indexWhere((b) =>
               (b['id'] ?? b['_id']).toString() == data['busId'].toString());
           if (busIndex != -1) {
             globalBuses[busIndex]['location'] =
@@ -2226,7 +2269,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     String pass = st['password']?.toString() ?? '';
     String phone = st['parentPhone']?.toString() ?? '';
     String addr = st['address']?.toString() ?? '';
-    
+
     // 🌟 الإصلاح السحري للقائمة المنسدلة الذي كان يمنع فتح النافذة
     String? sBus = st['busId']?.toString().trim();
     if (sBus == null || sBus.isEmpty || !globalBuses.any((b) => (b['id'] ?? b['_id']).toString() == sBus)) {
@@ -2234,7 +2277,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     }
 
     String stopNum = (st['stopNumber'] ?? 99).toString();
-    
+
     // 🌟 حماية لقراءة الخريطة
     LatLng? homeLocation;
     if (st['home'] != null) {
@@ -2599,7 +2642,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                               final bus = globalBuses[index];
                               final String currentBusId = (bus['id'] ?? bus['_id']).toString();
                               bool isTrackingThis = selectedTrackedBusId == currentBusId;
-                              
+
                               return Container(
                                   margin: const EdgeInsets.only(bottom: 10),
                                   padding: const EdgeInsets.all(12),
@@ -3160,7 +3203,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
       ),
     );
   }
-  
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -3169,11 +3212,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
             leading: IconButton(
                 icon: const Icon(Icons.logout, color: Colors.white),
                 onPressed: () async {
-                  final prefs = await SharedPreferences.getInstance();
-                  await prefs.clear();
-                  Navigator.pushReplacement(context,
-                      MaterialPageRoute(builder: (_) => const LoginScreen()));
-                }),
+  final prefs = await SharedPreferences.getInstance();
+  // ✅ نحذف فقط بيانات الدخول المؤقتة ونحتفظ بكلمة مرور الإدارة
+  await prefs.remove('role');
+  await prefs.remove('studentId');
+  await prefs.remove('busId');
+
+  Navigator.pushReplacement(context,
+      MaterialPageRoute(builder: (_) => const LoginScreen()));
+}),
             title: const Text('لوحة الإدارة المركزية',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)), // 🌟 هنا قوسين فقط بدلاً من 3
             actions: [

@@ -892,11 +892,15 @@ void _changeDriverPassword() {
           leading: IconButton(
               icon: const Icon(Icons.logout, color: Colors.white),
               onPressed: () async {
-                final prefs = await SharedPreferences.getInstance();
-                await prefs.clear(); 
-                Navigator.pushReplacement(context,
-                    MaterialPageRoute(builder: (_) => const LoginScreen()));
-              }),
+  final prefs = await SharedPreferences.getInstance();
+  // ✅ نحذف فقط بيانات الدخول المؤقتة ونحتفظ بكلمة مرور الإدارة
+  await prefs.remove('role');
+  await prefs.remove('studentId');
+  await prefs.remove('busId');
+  
+  Navigator.pushReplacement(context,
+      MaterialPageRoute(builder: (_) => const LoginScreen()));
+}),
           title: Text(
               'المشرف ${globalBuses.firstWhere((b) => (b['id'] ?? b['_id']).toString() == widget.busId, orElse: () => {
                     'driverName': ''
@@ -1504,11 +1508,15 @@ class _ParentDashboardState extends State<ParentDashboard> {
           leading: IconButton(
               icon: const Icon(Icons.logout, color: Colors.white),
               onPressed: () async {
-                final prefs = await SharedPreferences.getInstance();
-                await prefs.clear(); 
-                Navigator.pushReplacement(context,
-                    MaterialPageRoute(builder: (_) => const LoginScreen()));
-              }),
+  final prefs = await SharedPreferences.getInstance();
+  // ✅ نحذف فقط بيانات الدخول المؤقتة ونحتفظ بكلمة مرور الإدارة
+  await prefs.remove('role');
+  await prefs.remove('studentId');
+  await prefs.remove('busId');
+  
+  Navigator.pushReplacement(context,
+      MaterialPageRoute(builder: (_) => const LoginScreen()));
+}),
           title: Text('ولي أمر: ${widget.studentData['name']}',
               style: const TextStyle(fontSize: 14)),
           // 🌟 قائمة الأزرار مجمعة هنا
@@ -3169,11 +3177,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
             leading: IconButton(
                 icon: const Icon(Icons.logout, color: Colors.white),
                 onPressed: () async {
-                  final prefs = await SharedPreferences.getInstance();
-                  await prefs.clear();
-                  Navigator.pushReplacement(context,
-                      MaterialPageRoute(builder: (_) => const LoginScreen()));
-                }),
+  final prefs = await SharedPreferences.getInstance();
+  // ✅ نحذف فقط بيانات الدخول المؤقتة ونحتفظ بكلمة مرور الإدارة
+  await prefs.remove('role');
+  await prefs.remove('studentId');
+  await prefs.remove('busId');
+  
+  Navigator.pushReplacement(context,
+      MaterialPageRoute(builder: (_) => const LoginScreen()));
+}),
             title: const Text('لوحة الإدارة المركزية',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)), // 🌟 هنا قوسين فقط بدلاً من 3
             actions: [

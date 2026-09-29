@@ -86,52 +86,56 @@ Future<bool> onIosBackground(ServiceInstance service) async {
 @pragma('vm:entry-point')
 void onStartBackground(ServiceInstance service) async {
   DartPluginRegistrant.ensureInitialized();
-  WidgetsFlutterBinding.ensureInitialized(); // 🌟 سطر جديد مهم
+  WidgetsFlutterBinding.ensureInitialized(); 
 
-  // 🌟 الكود الجديد: تهيئة الإشعارات داخل الخدمة الخلفية
+  // تهيئة الإشعارات داخل الخدمة الخلفية لضمان عملها
   const AndroidInitializationSettings initializationSettingsAndroid =
       AndroidInitializationSettings('ic_launcher');
   const InitializationSettings initializationSettings =
       InitializationSettings(android: initializationSettingsAndroid);
   await flutterLocalNotificationsPlugin.initialize(initializationSettings);
 
-  final prefs = await SharedPreferences.getInstance();
-  String? role = prefs.getString('role');
-  String? studentId = prefs.getString('studentId');
+  // 🌟 الاتصال بالسيرفر فوراً وبدون شروط (خارج الـ if)
+  IO.Socket backgroundSocket = IO.io('https://masarak-aleppo.duckdns.org', <String, dynamic>{
+    'transports': ['websocket'],
+    'autoConnect': true
+  });
 
-  // ... باقي الكود يبقى كما هو (الاتصال بالسيرفر واستقبال الإشعارات) ...
+  backgroundSocket.connect(); // إجبار الاتصال
 
-  if (role == 'parent') {
-    IO.Socket backgroundSocket =
-        IO.io('https://masarak-aleppo.duckdns.org', <String, dynamic>{
-      'transports': ['websocket'],
-      'autoConnect': true
-    });
+  // الاستماع الدائم للأحداث في الخلفية
+  backgroundSocket.on('busNotification', (data) async {
+    // 🌟 جلب بيانات الدخول "الطازجة" لحظة وصول الإشعار
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload(); // أمر حاسم: يمنع الخدمة من قراءة بيانات قديمة
+    
+    String? role = prefs.getString('role');
+    String? studentId = prefs.getString('studentId');
 
-    backgroundSocket.on('busNotification', (data) async {
-      if (data['studentId'] == null || data['studentId'] == studentId) {
-        String type = data['type'];
-        String msg = data['msg'];
-        String title = 'تحديث من الحافلة';
+    // التحقق الآن: هل المستخدم الحالي ولي أمر؟ وهل الإشعار يخصه؟
+    if (role == 'parent' && (data['studentId'] == null || data['studentId'] == studentId)) {
+      String type = data['type'];
+      String msg = data['msg'];
+      String title = 'تحديث من الحافلة';
 
-        if (type == 'approaching')
-          title = '⚠️ الحافلة تقترب!';
-        else if (type == 'emergency') // 🌟 السطر الجديد
-          title = '🚨 حالة طوارئ/تأخير!'; // 🌟 السطر الجديد
-        else if (type == 'student_boarded')
-          title = '✅ تأكيد صعود';
-        else if (type == 'student_dropped_off') // <--- السطر الجديد
-          title = '🏠 تأكيد نزول'; // <--- السطر الجديد
-        else if (type == 'student_absent')
-          title = '❌ غياب الطالب';
-        else if (type == 'trip_started')
-          title = '🚀 انطلاق الرحلة';
-        else if (type == 'trip_ended') title = '🏁 نهاية الرحلة';
+      if (type == 'approaching')
+        title = '⚠️ الحافلة تقترب!';
+      else if (type == 'emergency')
+        title = '🚨 حالة طوارئ/تأخير!';
+      else if (type == 'student_boarded')
+        title = '✅ تأكيد صعود';
+      else if (type == 'student_dropped_off')
+        title = '🏠 تأكيد نزول';
+      else if (type == 'student_absent')
+        title = '❌ غياب الطالب';
+      else if (type == 'trip_started')
+        title = '🚀 انطلاق الرحلة';
+      else if (type == 'trip_ended') 
+        title = '🏁 نهاية الرحلة';
 
-        await showLoudNotification(title, msg);
-      }
-    });
-  }
+      await showLoudNotification(title, msg);
+    }
+  });
 }
 
 // ==========================================

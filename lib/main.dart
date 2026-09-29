@@ -86,10 +86,20 @@ Future<bool> onIosBackground(ServiceInstance service) async {
 @pragma('vm:entry-point')
 void onStartBackground(ServiceInstance service) async {
   DartPluginRegistrant.ensureInitialized();
+  WidgetsFlutterBinding.ensureInitialized(); // 🌟 سطر جديد مهم
+
+  // 🌟 الكود الجديد: تهيئة الإشعارات داخل الخدمة الخلفية
+  const AndroidInitializationSettings initializationSettingsAndroid =
+      AndroidInitializationSettings('ic_launcher');
+  const InitializationSettings initializationSettings =
+      InitializationSettings(android: initializationSettingsAndroid);
+  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
 
   final prefs = await SharedPreferences.getInstance();
   String? role = prefs.getString('role');
   String? studentId = prefs.getString('studentId');
+
+  // ... باقي الكود يبقى كما هو (الاتصال بالسيرفر واستقبال الإشعارات) ...
 
   if (role == 'parent') {
     IO.Socket backgroundSocket =
@@ -139,6 +149,7 @@ Future<void> showLoudNotification(String title, String body) async {
     playSound: true,
     enableVibration: true,
     visibility: NotificationVisibility.public,
+    category: AndroidNotificationCategory.alarm,
   );
 
   const NotificationDetails platformDetails =

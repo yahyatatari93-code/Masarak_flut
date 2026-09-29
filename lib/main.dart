@@ -412,80 +412,100 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
-  // نفس دالة تسجيل الدخول السابقة بدون أي تغيير في المنطق
-  void _attemptLogin() async {
-    String enteredName = _usernameController.text.trim();
-    String enteredPass = _passwordController.text.trim();
-    final prefs = await SharedPreferences.getInstance();
+ void _attemptLogin() async {
+     String enteredName = _usernameController.text.trim();
+     String enteredPass = _passwordController.text.trim();
+     final prefs = await SharedPreferences.getInstance();
 
-    if (enteredName.isEmpty || enteredPass.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('الرجاء إدخال الاسم وكلمة المرور'),
-          backgroundColor: Colors.orange));
-      return;
-    }
+     if (enteredName.isEmpty || enteredPass.isEmpty) {
+       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+           content: Text('الرجاء إدخال الاسم وكلمة المرور'),
+           backgroundColor: Colors.orange));
+       return;
+     }
 
-    // 🌟 جلب كلمة مرور الإدارة المحفوظة (وإذا لم تكن موجودة تكون admin)
-    String savedAdminPass = prefs.getString('admin_password') ?? 'admin';
+     // جلب كلمة مرور الإدارة المحفوظة (وإذا لم تكن موجودة تكون admin)
+     String savedAdminPass = prefs.getString('admin_password') ?? 'admin';
 
-    if (enteredName == 'admin' && enteredPass == savedAdminPass) {
-      await prefs.setString('role', 'admin');
-      Navigator.pushReplacement(
-          context, MaterialPageRoute(builder: (_) => const AdminDashboard()));
-      return;
-    }
+     if (enteredName == 'admin' && enteredPass == savedAdminPass) {
+       await prefs.setString('role', 'admin');
+       Navigator.pushReplacement(
+           context, MaterialPageRoute(builder: (_) => const AdminDashboard()));
+       return;
+     }
 
-    var foundBus = globalBuses.firstWhere((b) => b['driverName'] == enteredName,
-        orElse: () => {});
-    String driverPass = foundBus['password']?.toString() ?? '1234';
+     var foundBus = globalBuses.firstWhere((b) => b['driverName'] == enteredName,
+         orElse: () => {});
+     String driverPass = foundBus['password']?.toString() ?? '1234';
 
-    if (foundBus.isNotEmpty && enteredPass == driverPass) {
-      await prefs.setString('role', 'driver');
-      await prefs.setString('busId', (foundBus['id'] ?? foundBus['_id']).toString());
-      Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-              builder: (_) =>
-                  DriverDashboard(busId: (foundBus['id'] ?? foundBus['_id']).toString())));
-      return;
-    }
+     if (foundBus.isNotEmpty && enteredPass == driverPass) {
+       await prefs.setString('role', 'driver');
+       await prefs.setString('busId', (foundBus['id'] ?? foundBus['_id']).toString());
+       Navigator.pushReplacement(
+           context,
+           MaterialPageRoute(
+               builder: (_) =>
+                   DriverDashboard(busId: (foundBus['id'] ?? foundBus['_id']).toString())));
+       return;
+     }
 
-    var foundStudent = globalStudents
-        .firstWhere((s) => s['name'] == enteredName, orElse: () => {});
-    if (foundStudent.isNotEmpty) {
-      if (foundStudent['password'] == enteredPass) {
-        var assignedBus =
-            globalBuses.firstWhere((b) => (b['id'] ?? b['_id']).toString() == foundStudent['busId'].toString(),
-                orElse: () => {
-                      'number': '؟',
-                      'driverName': 'غير محدد',
-                      'driverPhone': '',
-                      'routeName': 'غير محدد'
-                    });
-        Map<String, dynamic> completeStudentData = {
-          ...foundStudent,
-          'busNumber': assignedBus['number'],
-          'driverName': assignedBus['driverName'],
-          'driverPhone': assignedBus['driverPhone'],
-          'routeName': assignedBus['routeName'],
-        };
+     var foundStudent = globalStudents
+         .firstWhere((s) => s['name'] == enteredName, orElse: () => {});
+     if (foundStudent.isNotEmpty) {
+       if (foundStudent['password'] == enteredPass) {
+         var assignedBus =
+             globalBuses.firstWhere((b) => (b['id'] ?? b['_id']).toString() == foundStudent['busId'].toString(),
+                 orElse: () => {
+                       'number': '؟',
+                       'driverName': 'غير محدد',
+                       'driverPhone': '',
+                       'routeName': 'غير محدد'
+                     });
+         Map<String, dynamic> completeStudentData = {
+           ...foundStudent,
+           'busNumber': assignedBus['number'],
+           'driverName': assignedBus['driverName'],
+           'driverPhone': assignedBus['driverPhone'],
+           'routeName': assignedBus['routeName'],
+         };
 
-        await prefs.setString('role', 'parent');
-        await prefs.setString('studentId', (foundStudent['id'] ?? foundStudent['_id']).toString());
-        await prefs.setString('busId', foundStudent['busId'] ?? '');
-        Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-                builder: (_) =>
-                    ParentDashboard(studentData: completeStudentData)));
-        return;
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('كلمة المرور غير صحيحة!'),
-            backgroundColor: Colors.redAccent));
-        return;
-      }
-    }
+         await prefs.setString('role', 'parent');
+         String studentId = (foundStudent['id'] ?? foundStudent['_id']).toString();
+         await prefs.setString('studentId', studentId);
+         await prefs.setString('busId', foundStudent['busId'] ?? '');
+
+         // 🚀 --- كود إرسال التوكن للسيرفر لتفعيل الإشعارات --- 🚀
+         try {
+           String? fcmToken = await FirebaseMessaging.instance.getToken();
+           if (fcmToken != null) {
+             await http.post(
+               Uri.parse('http://169.58.150.76:3000/api/update-fcm-token'),
+               headers: {'Content-Type': 'application/json'},
+               body: jsonEncode({
+                 'studentId': studentId,
+                 'fcmToken': fcmToken,
+               }),
+             );
+             print("✅ تم تفعيل الإشعارات وإرسال التوكن بنجاح للطالب: $studentId");
+           }
+         } catch (e) {
+           print("❌ خطأ في إرسال التوكن للسيرفر: $e");
+         }
+         // -----------------------------------------------------
+
+         Navigator.pushReplacement(
+             context,
+             MaterialPageRoute(
+                 builder: (_) =>
+                     ParentDashboard(studentData: completeStudentData)));
+         return;
+       } else {
+         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+             content: Text('كلمة المرور غير صحيحة!'),
+             backgroundColor: Colors.redAccent));
+         return;
+       }
+     }
 
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('بيانات الدخول غير صحيحة!'),

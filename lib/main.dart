@@ -235,26 +235,40 @@ double calculateDistance(LatLng p1, LatLng p2) {
   return 12742 * math.asin(math.sqrt(a)) * 1000;
 }
 
+// 🌟 دالة مسار ولي الأمر المحدثة (مع نظام الطوارئ Timeout)
 Future<Map<String, dynamic>?> getRouteDetails(LatLng start, LatLng end) async {
   try {
     final url =
         'http://router.project-osrm.org/route/v1/driving/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=full&geometries=geojson';
-    final response = await http.get(Uri.parse(url));
+    
+    // 🌟 إضافة Timeout لمنع تعليق التطبيق إذا كان سيرفر الخرائط بطيئاً
+    final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 5));
+    
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
-      final geometry = data['routes'][0]['geometry']['coordinates'] as List;
-      return {
-        'distance': data['routes'][0]['distance'],
-        'duration': data['routes'][0]['duration'],
-        'points': geometry.map((p) => LatLng(p[1], p[0])).toList()
-      };
+      if (data['routes'] != null && data['routes'].isNotEmpty) {
+        final geometry = data['routes'][0]['geometry']['coordinates'] as List;
+        return {
+          'distance': data['routes'][0]['distance'],
+          'duration': data['routes'][0]['duration'],
+          'points': geometry.map((p) => LatLng(p[1], p[0])).toList()
+        };
+      }
     }
   } catch (e) {
-    print('OSRM Error: $e');
+    print('⚠️ OSRM API Error (RouteDetails): $e');
+    // 🌟 خطة بديلة: إعادة مسار مستقيم وتقدير تقريبي لتجنب انهيار التطبيق
+    double dist = calculateDistance(start, end);
+    return {
+      'distance': dist,
+      'duration': (dist / 10).round(), // تقدير تقريبي لسرعة الباص (أمتار في الثانية)
+      'points': [start, end]
+    };
   }
   return null;
 }
 
+// 🌟 دالة مسار المشرف المحدثة (مع نظام الطوارئ)
 Future<List<LatLng>> getMultiPointRoute(List<LatLng> waypoints) async {
   if (waypoints.length < 2) return waypoints;
   try {
@@ -262,14 +276,21 @@ Future<List<LatLng>> getMultiPointRoute(List<LatLng> waypoints) async {
         waypoints.map((p) => '${p.longitude},${p.latitude}').join(';');
     final url =
         'http://router.project-osrm.org/route/v1/driving/$coords?overview=full&geometries=geojson';
-    final response = await http.get(Uri.parse(url));
+    
+    // 🌟 إضافة Timeout
+    final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 5));
+    
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
-      final geometry = data['routes'][0]['geometry']['coordinates'] as List;
-      return geometry.map((p) => LatLng(p[1], p[0])).toList();
+      if (data['routes'] != null && data['routes'].isNotEmpty) {
+        final geometry = data['routes'][0]['geometry']['coordinates'] as List;
+        return geometry.map((p) => LatLng(p[1], p[0])).toList();
+      }
     }
   } catch (e) {
-    print('Multi OSRM Error: $e');
+    print('⚠️ Multi OSRM Error (MultiPointRoute): $e');
+    // 🌟 خطة بديلة: رسم خطوط مستقيمة بين نقاط الطلاب بدلاً من تعطل الخريطة
+    return waypoints;
   }
   return waypoints;
 }
@@ -666,7 +687,6 @@ class _DriverDashboardState extends State<DriverDashboard> {
   LatLng currentPos = const LatLng(36.2150, 37.1450);
   StreamSubscription<Position>? positionStream;
   final MapController mapController = MapController();
-  final String serverUrl = 'https://masarak-aleppo.duckdns.org';
   final LatLng schoolLocation = const LatLng(36.28086, 37.03758);
   List<LatLng> streetRoute = [];
   Timer? _routeTimer;
@@ -1408,7 +1428,6 @@ class _ParentDashboardState extends State<ParentDashboard> {
   bool isConnected = false;
   LatLng busPos = const LatLng(36.2150, 37.1450);
   final MapController mapController = MapController();
-  final String serverUrl = 'https://masarak-aleppo.duckdns.org';
   bool isReturnTrip = false;
   bool alertSent = false;
   String distanceText = '--';

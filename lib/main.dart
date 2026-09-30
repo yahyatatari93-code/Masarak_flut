@@ -700,15 +700,52 @@ class _DriverDashboardState extends State<DriverDashboard> {
     if (!serviceEnabled) return;
 
     LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
+
+    // 🌟 إضافة الإفصاح البارز (Prominent Disclosure) المطلوب والمفروض من جوجل بلاي
+    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+      bool? userAgreed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF1E293B),
+          title: const Row(
+            children: [
+              Icon(Icons.location_on, color: Colors.blueAccent),
+              SizedBox(width: 10),
+              Expanded(child: Text('تتبع الموقع في الخلفية', style: TextStyle(color: Colors.white, fontSize: 16))),
+            ],
+          ),
+          content: const Text(
+            'يجمع تطبيق "مسارك" بيانات الموقع الجغرافي لتمكين ميزة التتبع المباشر للحافلة وإرسال تنبيهات الاقتراب لأولياء الأمور، حتى عندما يكون التطبيق مغلقاً أو قيد الاستخدام في الخلفية.',
+            style: TextStyle(color: Colors.grey, height: 1.5),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('رفض', style: TextStyle(color: Colors.redAccent)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('موافق', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      );
+
+      // إذا وافق المشرف على الرسالة، نطلب الصلاحية الرسمية من النظام
+      if (userAgreed == true) {
+        permission = await Geolocator.requestPermission();
+      } else {
+        return; // المستخدم رفض، لا نكمل العملية
+      }
     }
 
     if (permission == LocationPermission.whileInUse ||
         permission == LocationPermission.always) {
       try {
         Position pos = await Geolocator.getCurrentPosition(
-            desiredAccuracy: LocationAccuracy.high);
+            desiredAccuracy: LocationAccuracy.bestForNavigation);
         if (mounted) {
           setState(() {
             currentPos = LatLng(pos.latitude, pos.longitude);

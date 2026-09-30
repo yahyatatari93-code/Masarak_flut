@@ -31,15 +31,28 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 🌟 تهيئة فايربيس
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  try {
+    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
-  // 🌟 طلب صلاحيات فايربيس واستخراج الـ Token
-  FirebaseMessaging messaging = FirebaseMessaging.instance;
-  await messaging.requestPermission();
-  String? token = await messaging.getToken();
-  print("🔥 FCM Token: $token");
+    if (!kIsWeb) {
+      FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+    }
+
+    FirebaseMessaging messaging = FirebaseMessaging.instance;
+    await messaging.requestPermission();
+
+    String? token;
+    if (kIsWeb) {
+      // 🌟 الصق المفتاح الطويل هنا بين علامتي التنصيص
+      token = await messaging.getToken(vapidKey: "BN9SNGftpPSBDwYckLRenv2vNXQOK6v42f3Y_K9MpxxsjxrEE1H9ukXbm_kYkZlomL6pYuPBg9iSmKT47wOlxlA");
+    } else {
+      token = await messaging.getToken();
+    }
+    print("🔥 FCM Token: $token");
+
+  } catch (e) {
+    print("⚠️ تم تخطي الإشعارات لنسخة الويب: $e");
+  }
 
   if (!kIsWeb) {
     try {

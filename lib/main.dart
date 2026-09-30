@@ -1297,33 +1297,71 @@ void _changeDriverPassword() {
                                                 }
                                               })
                                           : Row(mainAxisSize: MainAxisSize.min, children: [
+                                              // 🌟 زر تأكيد الحضور (متاح دائماً)
                                               IconButton(
                                                   icon: Icon(Icons.check_circle,
                                                       color: st['status'] == 'boarded'
                                                           ? Colors.green
-                                                          : (isNear ? Colors.blueAccent : Colors.grey),
+                                                          : Colors.blueAccent, // تم إزالة شرط اللون الرمادي
                                                       size: 26),
-                                                  onPressed: (isNear && st['status'] != 'boarded')
+                                                  onPressed: (st['status'] != 'boarded') // تم إزالة شرط isNear
                                                       ? () {
-                                                          setState(() => st['status'] = 'boarded');
-                                                          _sendNotification(
-                                                              isMorningTrip ? 'student_boarded' : 'student_dropped_off',
-                                                              isMorningTrip ? 'صعد ${st['name']} إلى الحافلة بنجاح.' : 'نزل ${st['name']} بسلام.',
-                                                              st['id']);
-                                                          _updateDriverRoute();
+                                                          showDialog(
+                                                            context: context,
+                                                            builder: (ctx) => AlertDialog(
+                                                              backgroundColor: const Color(0xFF1E293B),
+                                                              title: const Text('تأكيد الصعود', style: TextStyle(color: Colors.white)),
+                                                              content: Text('هل صعد ${st['name']} للحافلة بالفعل؟', style: const TextStyle(color: Colors.grey)),
+                                                              actions: [
+                                                                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء', style: TextStyle(color: Colors.grey))),
+                                                                ElevatedButton(
+                                                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                                                                  onPressed: () {
+                                                                    Navigator.pop(ctx);
+                                                                    setState(() => st['status'] = 'boarded');
+                                                                    _sendNotification(
+                                                                        isMorningTrip ? 'student_boarded' : 'student_dropped_off',
+                                                                        isMorningTrip ? 'صعد ${st['name']} إلى الحافلة بنجاح.' : 'نزل ${st['name']} بسلام.',
+                                                                        st['id']);
+                                                                    _updateDriverRoute(); // هذه الدالة ستمسح الموقف فوراً من الخريطة
+                                                                  },
+                                                                  child: const Text('نعم، تأكيد', style: TextStyle(color: Colors.white)),
+                                                                )
+                                                              ],
+                                                            ),
+                                                          );
                                                         }
                                                       : null),
+                                              // 🌟 زر تأكيد الغياب (متاح دائماً)
                                               IconButton(
                                                   icon: Icon(Icons.cancel,
                                                       color: st['status'] == 'absent'
                                                           ? Colors.red
-                                                          : (isNear ? Colors.orangeAccent : Colors.grey),
+                                                          : Colors.orangeAccent, // تم إزالة شرط اللون الرمادي
                                                       size: 26),
-                                                  onPressed: (isNear && st['status'] != 'absent')
+                                                  onPressed: (st['status'] != 'absent') // تم إزالة شرط isNear
                                                       ? () {
-                                                          setState(() => st['status'] = 'absent');
-                                                          _sendNotification('student_absent', 'لم يصعد ${st['name']} للحافلة.', st['id']);
-                                                          _updateDriverRoute();
+                                                          showDialog(
+                                                            context: context,
+                                                            builder: (ctx) => AlertDialog(
+                                                              backgroundColor: const Color(0xFF1E293B),
+                                                              title: const Text('تأكيد الغياب', style: TextStyle(color: Colors.white)),
+                                                              content: Text('هل أنت متأكد من غياب ${st['name']}؟', style: const TextStyle(color: Colors.grey)),
+                                                              actions: [
+                                                                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء', style: TextStyle(color: Colors.grey))),
+                                                                ElevatedButton(
+                                                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                                                                  onPressed: () {
+                                                                    Navigator.pop(ctx);
+                                                                    setState(() => st['status'] = 'absent');
+                                                                    _sendNotification('student_absent', 'لم يصعد ${st['name']} للحافلة.', st['id']);
+                                                                    _updateDriverRoute(); // هذه الدالة ستمسح الموقف فوراً من الخريطة
+                                                                  },
+                                                                  child: const Text('تأكيد الغياب', style: TextStyle(color: Colors.white)),
+                                                                )
+                                                              ],
+                                                            ),
+                                                          );
                                                         }
                                                       : null)
                                             ])

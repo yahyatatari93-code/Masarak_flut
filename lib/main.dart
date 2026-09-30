@@ -3328,42 +3328,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
-// 🌟 دالة تغيير كلمة مرور الإدارة
-  void _changeAdminPassword() {
-    String newPass = '';
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E293B),
-        title: const Text('تغيير كلمة مرور الإدارة', style: TextStyle(color: Colors.white)),
-        content: TextField(
-          style: const TextStyle(color: Colors.white),
-          decoration: const InputDecoration(
-              labelText: 'كلمة المرور الجديدة', labelStyle: TextStyle(color: Colors.blueAccent)),
-          onChanged: (val) => newPass = val,
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('إلغاء', style: TextStyle(color: Colors.grey))),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-            onPressed: () async {
-              if (newPass.isNotEmpty) {
-                final prefs = await SharedPreferences.getInstance();
-                await prefs.setString('admin_password', newPass); // حفظ الكلمة في الهاتف
-                Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('تم تغيير كلمة مرور الإدارة بنجاح!'), backgroundColor: Colors.green));
-              }
-            },
-            child: const Text('حفظ', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -3372,25 +3336,18 @@ class _AdminDashboardState extends State<AdminDashboard> {
             leading: IconButton(
                 icon: const Icon(Icons.logout, color: Colors.white),
                 onPressed: () async {
-  final prefs = await SharedPreferences.getInstance();
-  // ✅ نحذف فقط بيانات الدخول المؤقتة ونحتفظ بكلمة مرور الإدارة
-  await prefs.remove('role');
-  await prefs.remove('studentId');
-  await prefs.remove('busId');
+                  final prefs = await SharedPreferences.getInstance();
+                  // مسح بيانات الجلسة عند تسجيل الخروج
+                  await prefs.remove('role');
+                  await prefs.remove('studentId');
+                  await prefs.remove('busId');
 
-  Navigator.pushReplacement(context,
-      MaterialPageRoute(builder: (_) => const LoginScreen()));
-}),
+                  Navigator.pushReplacement(context,
+                      MaterialPageRoute(builder: (_) => const LoginScreen()));
+                }),
             title: const Text('لوحة الإدارة المركزية',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)), // 🌟 هنا قوسين فقط بدلاً من 3
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.vpn_key, color: Colors.orangeAccent),
-                tooltip: 'تغيير كلمة المرور',
-                onPressed: _changeAdminPassword,
-              )
-            ],
-        ), // 🌟 هنا يُغلق الـ AppBar بشكل صحيح
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        ),
         body: IndexedStack(index: _currentIndex, children: [
           _buildMapAndTrackingView(),
           _buildStudentsDatabaseView(),

@@ -1133,11 +1133,12 @@ void _changeDriverPassword() {
                                                 ? (isMorningTrip ? 'تسليم الجميع وإنهاء الرحلة' : 'إنهـاء الرحلـة')
                                                 : 'إنهـاء الرحلـة (مقفل) - اضغط مطولاً للإلغاء'), // 🌟 تم تحديث النص لتوضيح الميزة للسائق
                                         style: TextStyle(
-                                            fontSize: 14,
-                                            color: !isTracking || canEndTrip
-                                                ? Colors.white
-                                                : Colors.white70,
-                                            fontWeight: FontWeight.bold))))),
+                                              fontSize: 14,
+                                              color: !isTracking || canEndTrip
+                                                  ? Colors.white
+                                                  : Colors.white70,
+                                              fontWeight: FontWeight.bold))))),
+                      ), 
                       if (isTracking) ...[
                         const SizedBox(width: 10),
                         Container(

@@ -508,19 +508,28 @@ class _LoginScreenState extends State<LoginScreen> {
             print("❌ خطأ في إرسال التوكن: $e");
           }
 
-          // 🌟 الإصلاح: تحويل بيانات الموقع القادمة من السيرفر إلى كائن LatLng لتفهمه الخريطة
-          Map<String, dynamic> studentData = data['studentData'];
-          if (studentData['home'] != null && studentData['home'] is Map) {
-             studentData['home'] = LatLng(
-                 (studentData['home']['lat']).toDouble(), 
-                 (studentData['home']['lng']).toDouble()
-             );
+          // 🌟 الإصلاح الآمن: نسخ البيانات إلى Map جديد قابل للتعديل لتجنب أخطاء JSON
+          Map<String, dynamic> safeStudentData = Map<String, dynamic>.from(data['studentData'] ?? {});
+          
+          if (safeStudentData['home'] != null) {
+            try {
+              var h = safeStudentData['home'];
+              if (h is Map) {
+                // استخدام as num لتجنب أخطاء تحويل الـ int إلى double
+                safeStudentData['home'] = LatLng(
+                  (h['lat'] as num).toDouble(),
+                  (h['lng'] as num).toDouble()
+                );
+              }
+            } catch (e) {
+              print('⚠️ تخطي خطأ الإحداثيات: $e');
+            }
           }
 
           Navigator.pushReplacement(
               context,
               MaterialPageRoute(
-                  builder: (_) => ParentDashboard(studentData: studentData)));
+                  builder: (_) => ParentDashboard(studentData: safeStudentData)));
         }
       } else {
         // السيرفر رفض الدخول (كلمة مرور خاطئة أو اسم غير موجود)

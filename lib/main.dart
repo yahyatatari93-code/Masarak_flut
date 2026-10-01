@@ -1072,7 +1072,7 @@ void _changeDriverPassword() {
                         urlTemplate:
                             'https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
                         subdomains: const ['mt0', 'mt1', 'mt2', 'mt3'],
-                        userAgentPackageName: 'com.example.masarak',
+                        userAgentPackageName: 'com.masarak.syr',
                         maxZoom: 19.0,
                       ),
                       PolylineLayer(polylines: [
@@ -1767,7 +1767,7 @@ class _ParentDashboardState extends State<ParentDashboard> {
                 urlTemplate:
                     'https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
                 subdomains: const ['mt0', 'mt1', 'mt2', 'mt3'],
-                userAgentPackageName: 'com.example.masarak',
+                userAgentPackageName: 'com.masarak.syr',
                 maxZoom: 19.0,
               ),
               PolylineLayer(polylines: [
@@ -2740,7 +2740,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   urlTemplate:
                       'https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
                   subdomains: const ['mt0', 'mt1', 'mt2', 'mt3'],
-                  userAgentPackageName: 'com.example.masarak',
+                  userAgentPackageName: 'com.masarak.syr',
                   maxZoom: 19.0,
                 ),
                 PolylineLayer(polylines: polylines),
@@ -3437,7 +3437,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                 urlTemplate:
                     'https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
                 subdomains: const ['mt0', 'mt1', 'mt2', 'mt3'],
-                userAgentPackageName: 'com.example.masarak',
+                userAgentPackageName: 'com.masarak.syr',
                 maxZoom: 19.0,
               ),
             ],

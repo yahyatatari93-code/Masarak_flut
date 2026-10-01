@@ -508,28 +508,10 @@ class _LoginScreenState extends State<LoginScreen> {
             print("❌ خطأ في إرسال التوكن: $e");
           }
 
-          // 🌟 الإصلاح الآمن: نسخ البيانات إلى Map جديد قابل للتعديل لتجنب أخطاء JSON
-          Map<String, dynamic> safeStudentData = Map<String, dynamic>.from(data['studentData'] ?? {});
-          
-          if (safeStudentData['home'] != null) {
-            try {
-              var h = safeStudentData['home'];
-              if (h is Map) {
-                // استخدام as num لتجنب أخطاء تحويل الـ int إلى double
-                safeStudentData['home'] = LatLng(
-                  (h['lat'] as num).toDouble(),
-                  (h['lng'] as num).toDouble()
-                );
-              }
-            } catch (e) {
-              print('⚠️ تخطي خطأ الإحداثيات: $e');
-            }
-          }
-
           Navigator.pushReplacement(
               context,
               MaterialPageRoute(
-                  builder: (_) => ParentDashboard(studentData: safeStudentData)));
+                  builder: (_) => ParentDashboard(studentData: data['studentData'])));
         }
       } else {
         // السيرفر رفض الدخول (كلمة مرور خاطئة أو اسم غير موجود)
@@ -1452,6 +1434,17 @@ class _ParentDashboardState extends State<ParentDashboard> {
   String etaText = '--';
   List<LatLng> routePoints = [];
   Timer? _routeTimer;
+    // 🌟 المترجم الذكي: يمنع الشاشة البيضاء بتحويل الموقع برمجياً قبل رسمه
+  LatLng? get safeHomeLocation {
+    var h = widget.studentData['home'];
+    if (h is LatLng) return h;
+    if (h is Map) {
+      try {
+        return LatLng((h['lat'] as num).toDouble(), (h['lng'] as num).toDouble());
+      } catch (e) {}
+    }
+    return null;
+  }
 
   @override
   void initState() {
@@ -1511,7 +1504,7 @@ class _ParentDashboardState extends State<ParentDashboard> {
   }
 
   void _fetchRealRoute() async {
-    LatLng? home = widget.studentData['home'];
+    LatLng? home = safeHomeLocation; // 🌟 الاعتماد على المترجم هنا
     if (home == null) return;
     LatLng targetLocation = !isReturnTrip
         ? ((widget.studentData['status'] == 'boarded') ? schoolLocation : home)
@@ -1784,9 +1777,9 @@ class _ParentDashboardState extends State<ParentDashboard> {
                     color: Colors.blueAccent)
               ]),
               MarkerLayer(markers: [
-                if (widget.studentData['home'] != null)
+                if (safeHomeLocation != null)
                   Marker(
-                      point: widget.studentData['home'],
+                      point: safeHomeLocation!, 
                       width: 40,
                       height: 40,
                       child: const Text('📍', style: TextStyle(fontSize: 30))),

@@ -1535,10 +1535,18 @@ class _ParentDashboardState extends State<ParentDashboard> {
     socket.onConnect((_) => setState(() => isConnected = true));
     socket.onDisconnect((_) => setState(() => isConnected = false));
     socket.on('locationUpdated', (data) {
-      if (data['busId'] == widget.studentData['busId'] && mounted) {
+      // 1. توحيد نوع البيانات إلى String لضمان تطابق الشرط دائماً
+      if (data['busId'].toString() == widget.studentData['busId'].toString() && mounted) {
         setState(() {
-          busPos = LatLng(data['lat'], data['lng']);
+          // 2. التحويل الآمن للإحداثيات لتجنب توقف رسم الخريطة
+          busPos = LatLng(
+            (data['lat'] as num).toDouble(), 
+            (data['lng'] as num).toDouble()
+          );
         });
+        
+        // 3. (اختياري ومهم) تحريك كاميرا الخريطة لتلحق بالباص أثناء سيره
+        mapController.move(busPos, mapController.camera.zoom);
       }
     });
     socket.on('busNotification', (data) {

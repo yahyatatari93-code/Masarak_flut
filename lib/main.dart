@@ -890,7 +890,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
 
         _updateDriverRoute();
         _routeTimer = Timer.periodic(
-            const Duration(seconds: 30), (_) => _updateDriverRoute());
+            const Duration(seconds: 45), (_) => _updateDriverRoute());
 
         // 🌟 إعدادات متقدمة لمنع الهاتف من النوم أثناء إغلاق الشاشة
         LocationSettings locationSettings;
@@ -1476,9 +1476,19 @@ class _ParentDashboardState extends State<ParentDashboard> {
  @override
   void initState() {
     super.initState();
+    
+    // 🌟 سحب آخر موقع دقيق للحافلة من الذاكرة المركزية لمنع رسم خط عشوائي
+    var myBus = globalBuses.firstWhere(
+        (b) => (b['id'] ?? b['_id']).toString() == (widget.studentData['busId'] ?? '').toString(),
+        orElse: () => {}
+    );
+    if (myBus.isNotEmpty && myBus['location'] != null) {
+      busPos = myBus['location'];
+    }
+
     _initSocket();
     
-    // 🌟 جلب المسار (الخط الأزرق المتعرج) لمرة واحدة فقط عند فتح التطبيق
+    // 🌟 الآن الخط الأزرق سيُرسم بشكل دقيق 100%
     _fetchRealRoute();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1623,6 +1633,7 @@ class _ParentDashboardState extends State<ParentDashboard> {
               widget.studentData['status'] = 'absent';
             } else if (data['type'] == 'trip_started') {
               widget.studentData['status'] = 'waiting';
+              alertSent = false; // 🌟 إضافة هذا السطر هامة جداً جداً 🌟
             }
           });
         }

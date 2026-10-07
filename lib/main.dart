@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:geolocator_android/geolocator_android.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -663,6 +664,14 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     );
   }
+
+  @override
+  void dispose() {
+    // تدمير المتحكمات لتحرير الذاكرة
+    _usernameController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
 }
 
 // ==========================================
@@ -881,12 +890,31 @@ class _DriverDashboardState extends State<DriverDashboard> {
 
         _updateDriverRoute();
         _routeTimer = Timer.periodic(
-            const Duration(seconds: 15), (_) => _updateDriverRoute());
+            const Duration(seconds: 30), (_) => _updateDriverRoute());
 
-        positionStream = Geolocator.getPositionStream(
-                locationSettings: const LocationSettings(
-                    accuracy: LocationAccuracy.bestForNavigation,
-                    distanceFilter: 5))
+        // 🌟 إعدادات متقدمة لمنع الهاتف من النوم أثناء إغلاق الشاشة
+        LocationSettings locationSettings;
+        
+        if (defaultTargetPlatform == TargetPlatform.android) {
+          locationSettings = AndroidSettings(
+            accuracy: LocationAccuracy.bestForNavigation,
+            distanceFilter: 5,
+            forceLocationManager: true,
+            // 🌟 السر هنا: إجبار الهاتف على إبقاء مستشعر الموقع نشطاً (WakeLock)
+            foregroundNotificationConfig: const ForegroundNotificationConfig(
+              notificationText: "يتم الآن تتبع مسار الحافلة وإرساله للآباء",
+              notificationTitle: "مسارك - رحلة نشطة",
+              enableWakeLock: true,
+            ),
+          );
+        } else {
+          locationSettings = const LocationSettings(
+            accuracy: LocationAccuracy.bestForNavigation,
+            distanceFilter: 5,
+          );
+        }
+
+        positionStream = Geolocator.getPositionStream(locationSettings: locationSettings)
             .listen((Position position) {
           setState(() {
             currentSpeed = (position.speed * 3.6);
@@ -1433,7 +1461,6 @@ class _ParentDashboardState extends State<ParentDashboard> {
   String distanceText = '--';
   String etaText = '--';
   List<LatLng> routePoints = [];
-  Timer? _routeTimer;
     // 🌟 المترجم الذكي: يمنع الشاشة البيضاء بتحويل الموقع برمجياً قبل رسمه
   LatLng? get safeHomeLocation {
     var h = widget.studentData['home'];
@@ -1446,12 +1473,13 @@ class _ParentDashboardState extends State<ParentDashboard> {
     return null;
   }
 
-  @override
+ @override
   void initState() {
     super.initState();
     _initSocket();
-    _routeTimer = Timer.periodic(
-        const Duration(seconds: 5), (timer) => _fetchRealRoute());
+    
+    // 🌟 جلب المسار (الخط الأزرق المتعرج) لمرة واحدة فقط عند فتح التطبيق
+    _fetchRealRoute();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkBatteryOptimization();
@@ -1534,26 +1562,73 @@ class _ParentDashboardState extends State<ParentDashboard> {
     socket.connect();
     socket.onConnect((_) => setState(() => isConnected = true));
     socket.onDisconnect((_) => setState(() => isConnected = false));
+
+    // 🌟 1. استقبال حركة الباص وتحديث العدادات محلياً (بدون إنترنت إضافي)
     socket.on('locationUpdated', (data) {
-      // 1. توحيد نوع البيانات إلى String لضمان تطابق الشرط دائماً
-      if (data['busId'].toString() == widget.studentData['busId'].toString() && mounted) {
+      String myBusId = (widget.studentData['busId'] ?? '').toString();
+      String incomingBusId = (data['busId'] ?? '').toString();
+
+      if (incomingBusId == myBusId && mounted) {
         setState(() {
-          // 2. التحويل الآمن للإحداثيات لتجنب توقف رسم الخريطة
+          // تحويل وتحديث موقع الباص لتجنب أخطاء الأرقام الصحيحة
           busPos = LatLng(
-            (data['lat'] as num).toDouble(), 
+            (data['lat'] as num).toDouble(),
             (data['lng'] as num).toDouble()
           );
+
+          // 🌟 حساب المسافة والوقت محلياً بخط مستقيم لحركة الباص فوق المسار
+          LatLng? home = safeHomeLocation;
+          if (home != null) {
+            LatLng targetLocation = !isReturnTrip
+                ? ((widget.studentData['status'] == 'boarded') ? schoolLocation : home)
+                : home;
+
+            // حساب المسافة المتبقية للمتغيرات (بالمتر)
+            double dist = calculateDistance(busPos, targetLocation);
+
+            // تحديث النصوص السفلية (بافتراض سرعة الحافلة داخل المدينة حوالي 24 كم/ساعة = 400 متر/دقيقة)
+            distanceText = '${(dist / 1000).toStringAsFixed(1)} كم';
+            int estimatedMinutes = (dist / 400).ceil(); 
+            etaText = '$estimatedMinutes دقيقة';
+
+            // إطلاق تنبيه الاقتراب إذا تجاوز مسافة 300 متر
+            if (targetLocation == home && dist <= 300 && !alertSent) {
+              alertSent = true;
+              _showNotification('الحافلة تقترب! (أقل من 300 متر)', 'approaching');
+            }
+          }
         });
         
-        // 3. (اختياري ومهم) تحريك كاميرا الخريطة لتلحق بالباص أثناء سيره
+        // تحريك كاميرا الخريطة لتلحق بالباص أثناء سيره
         mapController.move(busPos, mapController.camera.zoom);
       }
     });
+
+    // 🌟 2. استقبال إشعارات المشرف وتحديث التايم لاين والمسار بذكاء
     socket.on('busNotification', (data) {
-      if (data['studentId'] == null ||
-          data['studentId'] == widget.studentData['id']) {
+      String myId = (widget.studentData['id'] ?? widget.studentData['_id'] ?? '').toString();
+      String incomingStudentId = (data['studentId'] ?? '').toString();
+
+      if (incomingStudentId.isEmpty || incomingStudentId == 'null' || incomingStudentId == myId) {
         _showNotification(data['msg'], data['type']);
-        if (data['type'] == 'trip_started') {
+        
+        if (mounted) {
+          setState(() {
+            // تحديث حالة الطالب محلياً لكي يتحدث شريط التايم لاين البصري فوراً
+            if (data['type'] == 'student_boarded') {
+              widget.studentData['status'] = 'boarded';
+            } else if (data['type'] == 'student_dropped_off') {
+              widget.studentData['status'] = 'dropped_off';
+            } else if (data['type'] == 'student_absent') {
+              widget.studentData['status'] = 'absent';
+            } else if (data['type'] == 'trip_started') {
+              widget.studentData['status'] = 'waiting';
+            }
+          });
+        }
+
+        // إذا بدأت الرحلة أو صعد الطالب، نطلب من الخادم رسم الخط الأزرق الجديد للوجهة الجديدة
+        if (data['type'] == 'trip_started' || data['type'] == 'student_boarded') {
           _fetchRealRoute();
         }
       }
@@ -1659,7 +1734,6 @@ class _ParentDashboardState extends State<ParentDashboard> {
 
   @override
   void dispose() {
-    _routeTimer?.cancel();
     socket.dispose();
     super.dispose();
   }
@@ -1757,6 +1831,8 @@ class _ParentDashboardState extends State<ParentDashboard> {
                     isReturnTrip = !isReturnTrip;
                     alertSent = false;
                   });
+                  // 🌟 إعادة رسم المسار الأزرق نحو الوجهة الجديدة
+                  _fetchRealRoute(); 
                 }),
             // 🌟 هذا هو الكود الذي كان يسبب الخطأ، أدخلناه داخل قائمة actions
             Icon(Icons.circle,
@@ -3133,21 +3209,79 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         IconButton(
                             icon: const Icon(Icons.delete, color: Colors.red),
                             onPressed: () async {
-                              try {
-                                final String busId = (bus['id'] ?? bus['_id']).toString();
-                                final response = await http.delete(Uri.parse(
-                                    '$serverUrl/api/buses/$busId'));
-                                if (response.statusCode == 200) {
-                                  setState(() {
-                                    for (var s in globalStudents.where(
-                                        (s) => s['busId'].toString() == busId)) {
-                                      s['busId'] = '';
+                              // 1. إظهار نافذة تأكيد لمنع الحذف بالخطأ
+                              bool? confirm = await showDialog(
+                                context: context,
+                                builder: (ctx) => AlertDialog(
+                                  backgroundColor: const Color(0xFF1E293B),
+                                  title: const Text('تأكيد الحذف', style: TextStyle(color: Colors.white)),
+                                  content: const Text('هل أنت متأكد من حذف هذه الحافلة؟ سيتم إزالة ارتباط جميع الطلاب بها وتصنيفهم كـ "بدون حافلة".', style: TextStyle(color: Colors.grey)),
+                                  actions: [
+                                    TextButton(
+                                        onPressed: () => Navigator.pop(ctx, false),
+                                        child: const Text('إلغاء', style: TextStyle(color: Colors.grey))),
+                                    ElevatedButton(
+                                        style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                                        onPressed: () => Navigator.pop(ctx, true),
+                                        child: const Text('نعم، احذف', style: TextStyle(color: Colors.white))),
+                                  ],
+                                ),
+                              );
+
+                              // 2. إذا وافق الإداري على الحذف، نبدأ العملية
+                              if (confirm == true) {
+                                try {
+                                  final String busId = (bus['id'] ?? bus['_id']).toString();
+                                  
+                                  // أ) إرسال طلب للسيرفر لحذف الحافلة
+                                  final response = await http.delete(Uri.parse('$serverUrl/api/buses/$busId'));
+                                  
+                                  if (response.statusCode == 200) {
+                                    // ب) العثور على الطلاب المرتبطين بها وتحديث بياناتهم في السيرفر
+                                    final affectedStudents = globalStudents.where((s) => s['busId'].toString() == busId).toList();
+                                    
+                                    for (var student in affectedStudents) {
+                                      final String stId = (student['id'] ?? student['_id']).toString();
+                                      
+                                      // إرسال طلب تعديل للسيرفر لفك ارتباط الطالب
+                                      await http.put(
+                                        Uri.parse('$serverUrl/api/students/$stId'),
+                                        headers: {'Content-Type': 'application/json'},
+                                        body: json.encode({
+                                          'name': student['name'],
+                                          'seat': student['seat'],
+                                          'busId': '', // السطر الأهم: تفريغ حقل الحافلة
+                                          'password': student['password'],
+                                          'parentPhone': student['parentPhone'],
+                                          'address': student['address'],
+                                          'stopNumber': student['stopNumber'],
+                                          'home': student['home'] != null && student['home'] is LatLng
+                                              ? {'lat': student['home'].latitude, 'lng': student['home'].longitude}
+                                              : null
+                                        }),
+                                      );
                                     }
-                                    globalBuses.removeAt(index);
-                                  });
+
+                                    // ج) تحديث واجهة الإدارة محلياً بعد نجاح العمليات
+                                    setState(() {
+                                      for (var s in globalStudents.where((s) => s['busId'].toString() == busId)) {
+                                        s['busId'] = '';
+                                      }
+                                      globalBuses.removeAt(index);
+                                    });
+                                    
+                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                                      content: Text('تم حذف الحافلة وتحديث قاعدة بيانات الطلاب بنجاح'),
+                                      backgroundColor: Colors.green,
+                                    ));
+                                  }
+                                } catch (e) {
+                                  print('خطأ الحذف: $e');
+                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                                    content: Text('حدث خطأ أثناء الحذف. تأكد من الاتصال.'),
+                                    backgroundColor: Colors.redAccent,
+                                  ));
                                 }
-                              } catch (e) {
-                                print('خطأ الحذف: $e');
                               }
                             })
                       ])));

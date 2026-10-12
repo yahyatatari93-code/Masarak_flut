@@ -701,17 +701,17 @@ class _DriverDashboardState extends State<DriverDashboard> {
   Timer? _routeTimer;
 
   @override
-    void initState() {
-      super.initState();
-      _initSocket();
-      _requestPermissionsAndLocate();
+  void initState() {
+    super.initState();
+    _initSocket();
+    _requestPermissionsAndLocate();
+    _checkDriverBatteryOptimization(); // 🌟 أضف هذا السطر هنا
 
-      int currentHour = DateTime.now().hour;
-      isMorningTrip = currentHour < 12;
+    int currentHour = DateTime.now().hour;
+    isMorningTrip = currentHour < 12;
 
-      // 🌟 استرجاع حالة الرحلة إذا كان التطبيق قد أغلق
-      _checkSavedTrackingState();
-    }
+    _checkSavedTrackingState();
+  }
 
     // 🌟 دالة جديدة لقراءة الحالة المحفوظة
     void _checkSavedTrackingState() async {
@@ -787,6 +787,15 @@ class _DriverDashboardState extends State<DriverDashboard> {
     }
   }
 
+    // 🌟 دالة جديدة لضمان عمل هاتف السائق بأقصى طاقة في الخلفية
+  void _checkDriverBatteryOptimization() async {
+    if (kIsWeb) return;
+    if (await Permission.ignoreBatteryOptimizations.isDenied) {
+      if (!mounted) return;
+      await Permission.ignoreBatteryOptimizations.request();
+    }
+  }
+    
   void _initSocket() {
     socket = IO.io(serverUrl, <String, dynamic>{
       'transports': ['websocket'],
@@ -899,7 +908,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
           locationSettings = AndroidSettings(
             accuracy: LocationAccuracy.bestForNavigation,
             distanceFilter: 5,
-            forceLocationManager: true,
+            forceLocationManager: false,
             // 🌟 السر هنا: إجبار الهاتف على إبقاء مستشعر الموقع نشطاً (WakeLock)
             foregroundNotificationConfig: const ForegroundNotificationConfig(
               notificationText: "يتم الآن تتبع مسار الحافلة وإرساله للآباء",
@@ -919,7 +928,8 @@ class _DriverDashboardState extends State<DriverDashboard> {
           setState(() {
             currentSpeed = (position.speed * 3.6);
             currentPos = LatLng(position.latitude, position.longitude);
-            mapController.move(currentPos, 15.0);
+            // 🌟 التعديل هنا: استخدام mapController.camera.zoom بدلاً من 15.0 الثابتة
+            mapController.move(currentPos, mapController.camera.zoom);
           });
 
           if (isConnected) {

@@ -816,21 +816,26 @@ class _DriverDashboardState extends State<DriverDashboard> {
   }
     
   void _initSocket() {
+    // 🌟 إضافة أوامر الاستماتة في إعادة الاتصال للسوكيت الأمامي
     socket = IO.io(serverUrl, <String, dynamic>{
       'transports': ['websocket'],
-      'autoConnect': false
+      'autoConnect': true,
+      'reconnection': true,
+      'reconnectionDelay': 1000,
+      'reconnectionAttempts': 99999,
     });
     socket.connect();
     socket.onConnect((_) {
-  if (mounted) {
-    setState(() => isConnected = true);
-  }
-});
+      if (mounted) {
+        setState(() => isConnected = true);
+      }
+    });
     socket.onDisconnect((_) => setState(() => isConnected = false));
   }
 
   void _sendNotification(String type, String msg, String? studentId) {
-    // تم إزالة شرط الاتصال لضمان حفظ الإشعار وإرساله فوراً عند عودة الإنترنت
+    // 🌟 إزالة شرط (if isConnected) نهائياً! 
+    // مكتبة السوكيت ستحفظ الإشعار وتطلقه كالسهم فور عودة الإنترنت.
     socket.emit('busEvent', {
       'busId': widget.busId,
       'type': type,
@@ -919,13 +924,13 @@ class _DriverDashboardState extends State<DriverDashboard> {
         _routeTimer = Timer.periodic(
             const Duration(seconds: 45), (_) => _updateDriverRoute());
 
-        // 🌟 إعدادات متقدمة لمنع الهاتف من النوم أثناء إغلاق الشاشة
+        // 🌟 تخفيف القيود العسكرية عن الـ GPS ليتحرك الباص بسلاسة فائقة
         LocationSettings locationSettings;
         
         if (defaultTargetPlatform == TargetPlatform.android) {
           locationSettings = AndroidSettings(
-            accuracy: LocationAccuracy.bestForNavigation,
-            distanceFilter: 2, // 🌟 تم تقليل المسافة لـ 2 متر ليتحرك الباص بسلاسة فائقة
+            accuracy: LocationAccuracy.high, // تم تخفيضها من bestForNavigation
+            distanceFilter: 1, // تم جعلها 1 متر بدلاً من 5 ليتحرك فوراً
             forceLocationManager: false,
             foregroundNotificationConfig: const ForegroundNotificationConfig(
               notificationText: "يتم الآن تتبع مسار الحافلة وإرساله للآباء",
@@ -933,11 +938,10 @@ class _DriverDashboardState extends State<DriverDashboard> {
               enableWakeLock: true,
             ),
           );
-        }
-          else {
+        } else {
           locationSettings = const LocationSettings(
-            accuracy: LocationAccuracy.bestForNavigation,
-            distanceFilter: 5,
+            accuracy: LocationAccuracy.high,
+            distanceFilter: 1,
           );
         }
 
@@ -946,7 +950,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
           setState(() {
             currentSpeed = (position.speed * 3.6);
             currentPos = LatLng(position.latitude, position.longitude);
-            // 🌟 التعديل هنا: استخدام mapController.camera.zoom بدلاً من 15.0 الثابتة
+            // 🌟 استخدام زووم الكاميرا الحالي بدلاً من إجبارها على 15.0
             mapController.move(currentPos, mapController.camera.zoom);
           });
 
@@ -1595,7 +1599,10 @@ class _ParentDashboardState extends State<ParentDashboard> {
   void _initSocket() {
     socket = IO.io(serverUrl, <String, dynamic>{
       'transports': ['websocket'],
-      'autoConnect': false
+      'autoConnect': true,
+      'reconnection': true, // 🌟 ضمان بقاء هاتف الأهل متصلاً دائماً
+      'reconnectionDelay': 1000,
+      'reconnectionAttempts': 99999,
     });
     socket.connect();
     socket.onConnect((_) => setState(() => isConnected = true));

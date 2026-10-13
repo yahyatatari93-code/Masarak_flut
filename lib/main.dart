@@ -164,8 +164,11 @@ void onStartBackground(ServiceInstance service) async {
 
     String? role = prefs.getString('role');
     String? studentId = prefs.getString('studentId');
+    
+    // 🌟 معالجة ذكية للـ ID لمنع فشل المطابقة بين السيرفر والهاتف
+    String? incomingId = data['studentId']?.toString();
 
-    if (role == 'parent' && (data['studentId'] == null || data['studentId'] == studentId)) {
+    if (role == 'parent' && (incomingId == null || incomingId == 'null' || incomingId.isEmpty || incomingId == studentId)) {
       String type = data['type'];
       String msg = data['msg'];
       String title = 'تحديث من الحافلة';
@@ -188,7 +191,23 @@ void onStartBackground(ServiceInstance service) async {
 // ==========================================
 Future<void> showLoudNotification(String title, String body) async {
   if (kIsWeb) return;
-  // 🌟 التعديل هنا: إنشاء قناة جديدة (v3) لنجبر الهاتف على الرنين والاهتزاز
+
+  // 🌟 السر هنا: إجبار النظام على إنشاء القناة وتفعيلها قبل الإرسال لمنع اختفاء الإشعار
+  final AndroidFlutterLocalNotificationsPlugin? androidImplementation =
+      flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+
+  await androidImplementation?.createNotificationChannel(
+    const AndroidNotificationChannel(
+      'masarak_urgent_channel_v3',
+      'إشعارات مسارك العاجلة',
+      description: 'تنبيهات وصول الحافلة وصعود الطلاب',
+      importance: Importance.max,
+      playSound: true,
+      enableVibration: true,
+    ),
+  );
+
   const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
     'masarak_urgent_channel_v3',
     'إشعارات مسارك العاجلة',
@@ -811,14 +830,13 @@ class _DriverDashboardState extends State<DriverDashboard> {
   }
 
   void _sendNotification(String type, String msg, String? studentId) {
-    if (isConnected) {
-      socket.emit('busEvent', {
-        'busId': widget.busId,
-        'type': type,
-        'studentId': studentId,
-        'msg': msg
-      });
-    }
+    // تم إزالة شرط الاتصال لضمان حفظ الإشعار وإرساله فوراً عند عودة الإنترنت
+    socket.emit('busEvent', {
+      'busId': widget.busId,
+      'type': type,
+      'studentId': studentId,
+      'msg': msg
+    });
   }
 
   void _updateDriverRoute() async {
@@ -907,16 +925,16 @@ class _DriverDashboardState extends State<DriverDashboard> {
         if (defaultTargetPlatform == TargetPlatform.android) {
           locationSettings = AndroidSettings(
             accuracy: LocationAccuracy.bestForNavigation,
-            distanceFilter: 5,
+            distanceFilter: 2, // 🌟 تم تقليل المسافة لـ 2 متر ليتحرك الباص بسلاسة فائقة
             forceLocationManager: false,
-            // 🌟 السر هنا: إجبار الهاتف على إبقاء مستشعر الموقع نشطاً (WakeLock)
             foregroundNotificationConfig: const ForegroundNotificationConfig(
               notificationText: "يتم الآن تتبع مسار الحافلة وإرساله للآباء",
               notificationTitle: "مسارك - رحلة نشطة",
               enableWakeLock: true,
             ),
           );
-        } else {
+        }
+          else {
           locationSettings = const LocationSettings(
             accuracy: LocationAccuracy.bestForNavigation,
             distanceFilter: 5,

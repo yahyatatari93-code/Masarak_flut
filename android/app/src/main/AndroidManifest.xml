@@ -45,11 +45,17 @@
             </intent-filter>
         </activity>
         
-        <!-- 🌟 تم تصحيح نوع الخدمة ليكون location ليتوافق مع أندرويد 14 -->
+        <!-- الخدمة الخاصة بعمل التطبيق في الخلفية -->
         <service
             android:name="id.flutter.flutter_background_service.BackgroundService"
             android:foregroundServiceType="location"
             android:exported="true" />
+            
+        <!-- 🌟 التعديل السحري: الخدمة الإجبارية لمكتبة Geolocator لمنع تجميد الخريطة وحركة الباص -->
+        <service
+            android:name="com.baseflow.geolocator.GeolocatorLocationService"
+            android:foregroundServiceType="location"
+            android:exported="false" />
             
         <meta-data
             android:name="flutterEmbedding"

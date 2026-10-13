@@ -929,9 +929,9 @@ class _DriverDashboardState extends State<DriverDashboard> {
         
         if (defaultTargetPlatform == TargetPlatform.android) {
           locationSettings = AndroidSettings(
-            accuracy: LocationAccuracy.high, // تم تخفيضها من bestForNavigation
-            distanceFilter: 1, // تم جعلها 1 متر بدلاً من 5 ليتحرك فوراً
-            forceLocationManager: false,
+            accuracy: LocationAccuracy.high, // 🌟 تلتقط الإشارة بسرعة من الـ GPS والشبكة دون انتظار دقة خيالية
+            distanceFilter: 10, // 🌟 تحديث كل 10 أمتار (بمعدل تحديث ممتاز وسلس ولا يرهق المعالج)
+            forceLocationManager: false, // 🌟 الاعتماد على خدمات غوغل الذكية لتسريع الالتقاط
             foregroundNotificationConfig: const ForegroundNotificationConfig(
               notificationText: "يتم الآن تتبع مسار الحافلة وإرساله للآباء",
               notificationTitle: "مسارك - رحلة نشطة",
@@ -941,7 +941,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
         } else {
           locationSettings = const LocationSettings(
             accuracy: LocationAccuracy.high,
-            distanceFilter: 1,
+            distanceFilter: 10,
           );
         }
 

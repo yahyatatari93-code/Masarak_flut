@@ -891,14 +891,21 @@ class _DriverDashboardState extends State<DriverDashboard> {
         // حفظ حالة التتبع في ذاكرة الهاتف
         await prefs.setBool('isTracking_${widget.busId}', true);
 
-        // إذا لم يكن استرجاعاً (أي ضغطة جديدة من السائق)، نرسل إشعار البدء ونصفر الحالات
         if (!isRestoring) {
-          _sendNotification('trip_started', 'انطلقت الحافلة.', null);
-          for (var s in globalStudents) {
-            s['alertSent'] = false;
-            s['status'] = 'waiting';
-          }
-        }
+  _sendNotification('trip_started', 'انطلقت الحافلة.', null);
+  
+  // تصفير الحالات في التطبيق وفي السيرفر معاً
+  for (var s in globalStudents.where((student) => student['busId'] == widget.busId)) {
+    s['alertSent'] = false;
+    s['status'] = 'waiting';
+    
+    http.put(
+      Uri.parse('$serverUrl/api/students/${s['id']}'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode({'status': 'waiting'}),
+    );
+  }
+}
 
         try {
           Position initialPosition = await Geolocator.getCurrentPosition(
@@ -1418,24 +1425,25 @@ void _changeDriverPassword() {
                                                               actions: [
                                                                 TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء', style: TextStyle(color: Colors.grey))),
                                                                 ElevatedButton(
-                                                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-                                                                  onPressed: () {
-                                                                    Navigator.pop(ctx);
-                                                                    setState(() => st['status'] = 'boarded');
-_sendNotification(
-    isMorningTrip ? 'student_boarded' : 'student_dropped_off',
-    isMorningTrip ? 'صعد ${st['name']} إلى الحافلة بنجاح.' : 'نزل ${st['name']} بسلام.',
-    st['id']);
-_updateDriverRoute(); 
+  style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+  onPressed: () {
+    Navigator.pop(ctx);
+    setState(() => st['status'] = 'boarded');
+    _sendNotification(
+        isMorningTrip ? 'student_boarded' : 'student_dropped_off',
+        isMorningTrip ? 'صعد ${st['name']} إلى الحافلة بنجاح.' : 'نزل ${st['name']} بسلام.',
+        st['id']);
+    _updateDriverRoute(); 
 
-// 🌟 الكود الناقص لحفظ الحالة في السيرفر للأبد
-http.put(
-  Uri.parse('$serverUrl/api/students/${st['id']}'),
-  headers: {'Content-Type': 'application/json'},
-  body: json.encode({'status': 'boarded'}),
-);
-                                                                  child: const Text('نعم، تأكيد', style: TextStyle(color: Colors.white)),
-                                                                )
+    // حفظ الحالة في السيرفر
+    http.put(
+      Uri.parse('$serverUrl/api/students/${st['id']}'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode({'status': 'boarded'}),
+    );
+  }, // 🌟 هذا هو القوس الذي كان مفقوداً
+  child: const Text('نعم، تأكيد', style: TextStyle(color: Colors.white)),
+)
                                                               ],
                                                             ),
                                                           );
@@ -1459,21 +1467,22 @@ http.put(
                                                               actions: [
                                                                 TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء', style: TextStyle(color: Colors.grey))),
                                                                 ElevatedButton(
-                                                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-                                                                  onPressed: () {
-                                                                    Navigator.pop(ctx);
-                                                                    setState(() => st['status'] = 'absent');
-_sendNotification('student_absent', 'لم يصعد ${st['name']} للحافلة.', st['id']);
-_updateDriverRoute();
+  style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+  onPressed: () {
+    Navigator.pop(ctx);
+    setState(() => st['status'] = 'absent');
+    _sendNotification('student_absent', 'لم يصعد ${st['name']} للحافلة.', st['id']);
+    _updateDriverRoute();
 
-// 🌟 الكود الناقص لحفظ الغياب في السيرفر
-http.put(
-  Uri.parse('$serverUrl/api/students/${st['id']}'),
-  headers: {'Content-Type': 'application/json'},
-  body: json.encode({'status': 'absent'}),
-);
-                                                                  child: const Text('تأكيد الغياب', style: TextStyle(color: Colors.white)),
-                                                                )
+    // حفظ الغياب في السيرفر
+    http.put(
+      Uri.parse('$serverUrl/api/students/${st['id']}'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode({'status': 'absent'}),
+    );
+  }, // 🌟 هذا هو القوس الذي كان مفقوداً
+  child: const Text('تأكيد الغياب', style: TextStyle(color: Colors.white)),
+)
                                                               ],
                                                             ),
                                                           );

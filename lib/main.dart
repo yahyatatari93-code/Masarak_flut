@@ -921,9 +921,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
         }
 
         _updateDriverRoute();
-        _routeTimer = Timer.periodic(
-            const Duration(seconds: 45), (_) => _updateDriverRoute());
-
+        
         // 🌟 تخفيف القيود العسكرية عن الـ GPS ليتحرك الباص بسلاسة فائقة
         LocationSettings locationSettings;
         
@@ -1374,6 +1372,13 @@ void _changeDriverPassword() {
                                                     Uri.parse('$serverUrl/api/students/${st['id']}'),
                                                     headers: {'Content-Type': 'application/json'},
                                                     body: json.encode({
+                                                      'name': st['name'], // إرسال الاسم لضمان قبول السيرفر
+                                                      'seat': st['seat'], // إرسال المقعد
+                                                      'busId': st['busId'], // إرسال الباص
+                                                      'password': st['password'],
+                                                      'parentPhone': st['parentPhone'],
+                                                      'address': st['address'],
+                                                      'status': st['status'],
                                                       'home': {'lat': currentPos.latitude, 'lng': currentPos.longitude},
                                                       'stopNumber': newStopNumber
                                                     }),
@@ -1417,12 +1422,18 @@ void _changeDriverPassword() {
                                                                   onPressed: () {
                                                                     Navigator.pop(ctx);
                                                                     setState(() => st['status'] = 'boarded');
-                                                                    _sendNotification(
-                                                                        isMorningTrip ? 'student_boarded' : 'student_dropped_off',
-                                                                        isMorningTrip ? 'صعد ${st['name']} إلى الحافلة بنجاح.' : 'نزل ${st['name']} بسلام.',
-                                                                        st['id']);
-                                                                    _updateDriverRoute(); // هذه الدالة ستمسح الموقف فوراً من الخريطة
-                                                                  },
+_sendNotification(
+    isMorningTrip ? 'student_boarded' : 'student_dropped_off',
+    isMorningTrip ? 'صعد ${st['name']} إلى الحافلة بنجاح.' : 'نزل ${st['name']} بسلام.',
+    st['id']);
+_updateDriverRoute(); 
+
+// 🌟 الكود الناقص لحفظ الحالة في السيرفر للأبد
+http.put(
+  Uri.parse('$serverUrl/api/students/${st['id']}'),
+  headers: {'Content-Type': 'application/json'},
+  body: json.encode({'status': 'boarded'}),
+);
                                                                   child: const Text('نعم، تأكيد', style: TextStyle(color: Colors.white)),
                                                                 )
                                                               ],
@@ -1452,9 +1463,15 @@ void _changeDriverPassword() {
                                                                   onPressed: () {
                                                                     Navigator.pop(ctx);
                                                                     setState(() => st['status'] = 'absent');
-                                                                    _sendNotification('student_absent', 'لم يصعد ${st['name']} للحافلة.', st['id']);
-                                                                    _updateDriverRoute(); // هذه الدالة ستمسح الموقف فوراً من الخريطة
-                                                                  },
+_sendNotification('student_absent', 'لم يصعد ${st['name']} للحافلة.', st['id']);
+_updateDriverRoute();
+
+// 🌟 الكود الناقص لحفظ الغياب في السيرفر
+http.put(
+  Uri.parse('$serverUrl/api/students/${st['id']}'),
+  headers: {'Content-Type': 'application/json'},
+  body: json.encode({'status': 'absent'}),
+);
                                                                   child: const Text('تأكيد الغياب', style: TextStyle(color: Colors.white)),
                                                                 )
                                                               ],
@@ -1945,7 +1962,7 @@ class _ParentDashboardState extends State<ParentDashboard> {
                   title: 'في الانتظار',
                   icon: Icons.hourglass_empty,
                   isActive: currentStatus == 'waiting',
-                  isCompleted: currentStatus == 'boarded' || currentStatus == 'absent',
+                  isCompleted: currentStatus == 'boarded' || currentStatus == 'absent' || currentStatus == 'dropped_off',
                 ),
                 _buildTimelineLine(),
                 _buildTimelineStep(
